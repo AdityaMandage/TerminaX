@@ -20,15 +20,29 @@ export function registerHostCommands(
 
   // Add new host
   context.subscriptions.push(
-    vscode.commands.registerCommand('terminax.addHost', async (parentFolder?: SSHFolder) => {
+    vscode.commands.registerCommand('terminax.addHost', async () => {
       const host = await promptForHostConfig();
       if (!host) {
         return;
       }
 
-      // Set parent if provided
-      if (parentFolder) {
-        host.parentId = parentFolder.id;
+      await configManager.addNode(host);
+      treeProvider.refresh();
+
+      vscode.window.showInformationMessage(`Host "${host.label}" added successfully`);
+    })
+  );
+
+  // Add new host to a specific folder
+  context.subscriptions.push(
+    vscode.commands.registerCommand('terminax.addHostInFolder', async (folder?: SSHFolder) => {
+      const host = await promptForHostConfig();
+      if (!host) {
+        return;
+      }
+
+      if (folder) {
+        host.parentId = folder.id;
       }
 
       await configManager.addNode(host);
@@ -99,6 +113,10 @@ export function registerHostCommands(
  * Prompt user for host configuration (multi-step input)
  */
 async function promptForHostConfig(existing?: SSHHost): Promise<SSHHost | undefined> {
+  const terminaxConfig = vscode.workspace.getConfiguration('terminax');
+  const defaultKeepaliveInterval = terminaxConfig.get<number>('keepaliveInterval', 30000);
+  const defaultKeepaliveCountMax = terminaxConfig.get<number>('keepaliveCountMax', 3);
+
   // Step 1: Label
   const label = await vscode.window.showInputBox({
     prompt: 'Enter host name',
@@ -219,7 +237,9 @@ async function promptForHostConfig(existing?: SSHHost): Promise<SSHHost | undefi
         username: finalUsername,
         port,
         authMethod,
-        privateKeyPath
+        privateKeyPath,
+        keepaliveInterval: existing.config.keepaliveInterval ?? defaultKeepaliveInterval,
+        keepaliveCountMax: existing.config.keepaliveCountMax ?? defaultKeepaliveCountMax
       }
     };
   } else {
@@ -235,6 +255,8 @@ async function promptForHostConfig(existing?: SSHHost): Promise<SSHHost | undefi
     if (privateKeyPath) {
       host.config.privateKeyPath = privateKeyPath;
     }
+    host.config.keepaliveInterval = defaultKeepaliveInterval;
+    host.config.keepaliveCountMax = defaultKeepaliveCountMax;
     return host;
   }
 }

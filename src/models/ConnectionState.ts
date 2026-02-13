@@ -38,6 +38,12 @@ export interface ConnectionState {
   exitCode?: number;
 }
 
+export interface ConnectionMetadata {
+  terminalId?: string | null;
+  exitCode?: number;
+  error?: string;
+}
+
 /**
  * Tracks connection states for all hosts
  */
@@ -50,21 +56,26 @@ export class ConnectionStateTracker {
   updateState(
     hostId: string,
     status: ConnectionStatus,
-    metadata?: {
-      terminalId?: string | null;
-      exitCode?: number;
-      error?: string;
-    }
+    metadata?: ConnectionMetadata
   ): void {
     const existing = this.states.get(hostId);
+    const isNewConnection =
+      status === ConnectionStatus.CONNECTED &&
+      existing?.status !== ConnectionStatus.CONNECTED;
 
     const state: ConnectionState = {
       hostId,
       status,
-      terminalId: metadata?.terminalId !== undefined ? metadata.terminalId : (existing?.terminalId || null),
-      connectedAt: status === ConnectionStatus.CONNECTED ? new Date() : existing?.connectedAt,
+      terminalId:
+        metadata?.terminalId !== undefined
+          ? metadata.terminalId
+          : (existing?.terminalId || null),
+      connectedAt: isNewConnection ? new Date() : existing?.connectedAt,
       disconnectedAt: status !== ConnectionStatus.CONNECTED ? new Date() : undefined,
-      lastError: metadata?.error,
+      lastError:
+        status === ConnectionStatus.ERROR
+          ? metadata?.error || existing?.lastError
+          : undefined,
       exitCode: metadata?.exitCode
     };
 

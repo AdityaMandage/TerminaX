@@ -39,9 +39,33 @@
         "category": "TerminaX"
       },
       {
+        "command": "terminax.addHostInFolder",
+        "title": "Add SSH Host to Folder",
+        "icon": "$(add)",
+        "category": "TerminaX"
+      },
+      {
         "command": "terminax.addFolder",
         "title": "Add Folder",
         "icon": "$(new-folder)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.addFolderInFolder",
+        "title": "Add Subfolder",
+        "icon": "$(new-folder)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.renameFolder",
+        "title": "Rename Folder",
+        "icon": "$(edit)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.deleteFolder",
+        "title": "Delete Folder",
+        "icon": "$(trash)",
         "category": "TerminaX"
       },
       {
@@ -66,6 +90,12 @@
         "command": "terminax.connectSplit",
         "title": "Connect in Split Terminal",
         "icon": "$(split-horizontal)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.connectMultiple",
+        "title": "Connect Multiple Hosts",
+        "icon": "$(vm-connect)",
         "category": "TerminaX"
       },
       {
@@ -125,6 +155,26 @@
           "command": "terminax.refresh",
           "when": "view == terminax-hosts",
           "group": "navigation@3"
+        },
+        {
+          "command": "terminax.connectMultiple",
+          "when": "view == terminax-hosts",
+          "group": "navigation@4"
+        },
+        {
+          "command": "terminax.broadcastCommand",
+          "when": "view == terminax-hosts && terminax.broadcastActive",
+          "group": "navigation@5"
+        },
+        {
+          "command": "terminax.stopBroadcast",
+          "when": "view == terminax-hosts && terminax.broadcastActive",
+          "group": "navigation@6"
+        },
+        {
+          "command": "terminax.startBroadcast",
+          "when": "view == terminax-hosts && !terminax.broadcastActive",
+          "group": "navigation@7"
         }
       ],
       "view/item/context": [
@@ -154,19 +204,44 @@
           "group": "edit@2"
         },
         {
-          "command": "terminax.addHost",
+          "command": "terminax.addHostInFolder",
           "when": "view == terminax-hosts && viewItem == folder",
           "group": "folder@1"
         },
         {
-          "command": "terminax.addFolder",
+          "command": "terminax.addFolderInFolder",
           "when": "view == terminax-hosts && viewItem == folder",
           "group": "folder@2"
         },
         {
-          "command": "terminax.startBroadcast",
+          "command": "terminax.connectMultiple",
           "when": "view == terminax-hosts && viewItem == folder",
+          "group": "connection@3"
+        },
+        {
+          "command": "terminax.renameFolder",
+          "when": "view == terminax-hosts && viewItem == folder",
+          "group": "edit@1"
+        },
+        {
+          "command": "terminax.deleteFolder",
+          "when": "view == terminax-hosts && viewItem == folder",
+          "group": "edit@2"
+        },
+        {
+          "command": "terminax.startBroadcast",
+          "when": "view == terminax-hosts && viewItem == folder && !terminax.broadcastActive",
           "group": "broadcast@1"
+        },
+        {
+          "command": "terminax.broadcastCommand",
+          "when": "view == terminax-hosts && viewItem == folder && terminax.broadcastActive",
+          "group": "broadcast@2"
+        },
+        {
+          "command": "terminax.stopBroadcast",
+          "when": "view == terminax-hosts && viewItem == folder && terminax.broadcastActive",
+          "group": "broadcast@3"
         }
       ]
     },

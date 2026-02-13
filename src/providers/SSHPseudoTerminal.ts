@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { Client, ClientChannel, ConnectConfig } from 'ssh2';
 import * as fs from 'fs';
 import { SSHHost } from '../models/SSHHost';
-import { ConnectionStatus } from '../models/ConnectionState';
+import { ConnectionMetadata, ConnectionStatus } from '../models/ConnectionState';
 import { CredentialService } from '../services/CredentialService';
 
 /**
@@ -18,14 +18,19 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
   private client: Client | null = null;
   private stream: ClientChannel | null = null;
   private dimensions: vscode.TerminalDimensions | undefined;
-  private statusCallback?: (status: ConnectionStatus, metadata?: any) => void;
+  private statusCallback?: (status: ConnectionStatus, metadata?: ConnectionMetadata) => void;
   private streamClosedGracefully: boolean = false;
+  private isCleanedUp: boolean = false;
+  private hasRetriedAuthentication: boolean = false;
+  private passwordOverride?: string;
+  private hasEverConnected: boolean = false;
+  private hasShownErrorNotification: boolean = false;
 
   constructor(
     private host: SSHHost,
     private credentialService: CredentialService,
     private terminalId: string,
-    statusCallback?: (status: ConnectionStatus, metadata?: any) => void
+    statusCallback?: (status: ConnectionStatus, metadata?: ConnectionMetadata) => void
   ) {
     this.statusCallback = statusCallback;
   }
@@ -93,31 +98,43 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
    * Build SSH connection configuration
    */
   private async buildSSHConfig(): Promise<ConnectConfig> {
+    const extensionConfig = vscode.workspace.getConfiguration('terminax');
+
     const config: ConnectConfig = {
       host: this.host.config.host,
       port: this.host.config.port,
       username: this.host.config.username,
-      keepaliveInterval: this.host.config.keepaliveInterval || 30000,
-      keepaliveCountMax: this.host.config.keepaliveCountMax || 3,
+      keepaliveInterval:
+        this.host.config.keepaliveInterval ??
+        extensionConfig.get<number>('keepaliveInterval', 30000),
+      keepaliveCountMax:
+        this.host.config.keepaliveCountMax ??
+        extensionConfig.get<number>('keepaliveCountMax', 3),
       readyTimeout: 30000
     };
 
     // Handle authentication
     switch (this.host.config.authMethod) {
-      case 'password':
-        const password = await this.getPassword();
+      case 'password': {
+        const password = this.passwordOverride || await this.getPassword();
+        this.passwordOverride = undefined;
         if (password) {
           config.password = password;
         }
         break;
+      }
 
-      case 'keyfile':
+      case 'keyfile': {
         if (this.host.config.privateKeyPath) {
           try {
-            config.privateKey = fs.readFileSync(this.host.config.privateKeyPath);
+            const privateKey = fs.readFileSync(this.host.config.privateKeyPath);
+            config.privateKey = privateKey;
 
-            // Check if key has passphrase
-            const passphrase = await this.credentialService.getPrivateKeyPassphrase(this.host.id);
+            // Use stored passphrase if available; prompt only when key appears encrypted.
+            let passphrase = await this.credentialService.getPrivateKeyPassphrase(this.host.id);
+            if (!passphrase && this.isLikelyEncryptedPrivateKey(privateKey)) {
+              passphrase = await this.promptForPrivateKeyPassphrase();
+            }
             if (passphrase) {
               config.passphrase = passphrase;
             }
@@ -128,6 +145,7 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
           throw new Error('Private key path not specified');
         }
         break;
+      }
 
       case 'agent':
         config.agent = process.env.SSH_AUTH_SOCK;
@@ -177,6 +195,7 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
    */
   private onClientReady(): void {
     this.writeEmitter.fire(`✅ Connected!\r\n\r\n`);
+    this.hasEverConnected = true;
 
     // Update status
     this.updateStatus(ConnectionStatus.CONNECTED);
@@ -201,8 +220,8 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
           this.writeEmitter.fire(data.toString());
         });
 
-        stream.on('close', (code?: number, signal?: string) => {
-          this.onStreamClose(code, signal);
+        stream.on('close', (code?: number) => {
+          this.onStreamClose(code);
         });
 
         stream.stderr.on('data', (data: Buffer) => {
@@ -215,7 +234,7 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
   /**
    * Called when SSH stream closes
    */
-  private onStreamClose(code?: number, signal?: string): void {
+  private onStreamClose(code?: number): void {
     this.streamClosedGracefully = true;
 
     // Exit code 0 or undefined means clean exit (user typed 'exit' or normal termination)
@@ -240,6 +259,10 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
    * Called when SSH client closes
    */
   private onClientClose(): void {
+    if (this.isCleanedUp) {
+      return;
+    }
+
     // If stream already closed gracefully, don't treat as error
     if (this.streamClosedGracefully) {
       return;
@@ -254,11 +277,54 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
   /**
    * Handle connection errors
    */
-  private handleError(error: any): void {
-    const errorMsg = error.message || error.toString();
-    this.writeEmitter.fire(`\r\n\n❌ Error: ${errorMsg}\r\n`);
+  private handleError(error: unknown): void {
+    void this.handleErrorAsync(error);
+  }
 
-    this.updateStatus(ConnectionStatus.ERROR, { error: errorMsg });
+  private async handleErrorAsync(error: unknown): Promise<void> {
+    if (this.isCleanedUp) {
+      return;
+    }
+
+    const errorMsg = error instanceof Error ? error.message : String(error);
+
+    const interpretedError = this.interpretConnectionError(errorMsg);
+
+    if (this.shouldRetryAuthentication(interpretedError.kind)) {
+      this.hasRetriedAuthentication = true;
+      this.writeEmitter.fire(`\r\n\n❌ ${interpretedError.friendly}\r\n`);
+      this.writeEmitter.fire(`\r\n🔐 Authentication failed. Re-enter password to retry...\r\n`);
+
+      await this.credentialService.deletePassword(this.host.id);
+      this.teardownConnection();
+      this.streamClosedGracefully = false;
+
+      const replacementPassword = await this.getPassword();
+      if (!replacementPassword) {
+        this.updateStatus(ConnectionStatus.ERROR, { error: errorMsg });
+        this.closeEmitter.fire(1);
+        this.cleanup();
+        return;
+      }
+
+      this.passwordOverride = replacementPassword;
+      await this.connect();
+      return;
+    }
+
+    this.writeEmitter.fire(`\r\n\n❌ ${interpretedError.friendly}\r\n`);
+    if (interpretedError.showRaw) {
+      this.writeEmitter.fire(`ℹ️  ${errorMsg}\r\n`);
+    }
+
+    if (!this.hasEverConnected && !this.hasShownErrorNotification) {
+      this.hasShownErrorNotification = true;
+      void vscode.window.showErrorMessage(
+        `${this.host.label}: ${interpretedError.friendly}`
+      );
+    }
+
+    this.updateStatus(ConnectionStatus.ERROR, { error: interpretedError.friendly });
     this.closeEmitter.fire(1);
     this.cleanup();
   }
@@ -266,7 +332,7 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
   /**
    * Update connection status
    */
-  private updateStatus(status: ConnectionStatus, metadata?: any): void {
+  private updateStatus(status: ConnectionStatus, metadata?: ConnectionMetadata): void {
     if (this.statusCallback) {
       this.statusCallback(status, metadata);
     }
@@ -276,13 +342,117 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
    * Clean up resources
    */
   private cleanup(): void {
+    if (this.isCleanedUp) {
+      return;
+    }
+    this.isCleanedUp = true;
+    this.teardownConnection();
+  }
+
+  private teardownConnection(): void {
     if (this.stream) {
-      this.stream.close();
+      this.stream.removeAllListeners();
+      this.stream.stderr?.removeAllListeners();
+      try {
+        this.stream.close();
+      } catch {
+        // Stream may already be closed; safe to ignore during cleanup.
+      }
       this.stream = null;
     }
     if (this.client) {
+      this.client.removeAllListeners();
       this.client.end();
       this.client = null;
     }
+  }
+
+  private shouldRetryAuthentication(errorKind: string): boolean {
+    if (this.host.config.authMethod !== 'password' || this.hasRetriedAuthentication) {
+      return false;
+    }
+
+    return errorKind === 'auth';
+  }
+
+  private interpretConnectionError(errorMsg: string): {
+    kind: string;
+    friendly: string;
+    showRaw: boolean;
+  } {
+    if (/all configured authentication methods failed|permission denied|authentication failed/i.test(errorMsg)) {
+      return {
+        kind: 'auth',
+        friendly: 'Authentication failed (invalid username/password or key permissions)',
+        showRaw: false
+      };
+    }
+
+    if (/ECONNREFUSED|connection refused/i.test(errorMsg)) {
+      return {
+        kind: 'refused',
+        friendly: `Connection refused by ${this.host.config.host}:${this.host.config.port}. Check host/port and SSH service.`,
+        showRaw: false
+      };
+    }
+
+    if (/ETIMEDOUT|timed out|timeout/i.test(errorMsg)) {
+      return {
+        kind: 'timeout',
+        friendly: `Connection timed out while reaching ${this.host.config.host}:${this.host.config.port}`,
+        showRaw: false
+      };
+    }
+
+    if (/ENOTFOUND|getaddrinfo/i.test(errorMsg)) {
+      return {
+        kind: 'dns',
+        friendly: `Hostname not found: ${this.host.config.host}`,
+        showRaw: false
+      };
+    }
+
+    if (/EHOSTUNREACH|ENETUNREACH|host is unreachable|network is unreachable/i.test(errorMsg)) {
+      return {
+        kind: 'network',
+        friendly: `Host/network unreachable for ${this.host.config.host}`,
+        showRaw: false
+      };
+    }
+
+    return {
+      kind: 'generic',
+      friendly: 'SSH connection failed',
+      showRaw: true
+    };
+  }
+
+  private isLikelyEncryptedPrivateKey(privateKey: Buffer): boolean {
+    const keyContent = privateKey.toString('utf8');
+    return keyContent.includes('ENCRYPTED');
+  }
+
+  private async promptForPrivateKeyPassphrase(): Promise<string | undefined> {
+    const passphrase = await vscode.window.showInputBox({
+      prompt: `Enter passphrase for key used by ${this.host.config.username}@${this.host.config.host}`,
+      password: true,
+      ignoreFocusOut: true,
+      placeHolder: 'Private key passphrase'
+    });
+
+    if (!passphrase) {
+      return undefined;
+    }
+
+    const save = await vscode.window.showQuickPick(['Yes', 'No'], {
+      placeHolder: 'Save passphrase securely?',
+      ignoreFocusOut: true
+    });
+
+    if (save === 'Yes') {
+      await this.credentialService.savePrivateKeyPassphrase(this.host.id, passphrase);
+    }
+
+    return passphrase;
   }
 }

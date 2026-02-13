@@ -49,13 +49,6 @@ export class SSHTreeDataProvider
 
       // Description shows username@host
       item.description = `${host.config.username}@${host.config.host}`;
-
-      // Default command when clicking the host
-      item.command = {
-        command: 'terminax.connect',
-        title: 'Connect to Host',
-        arguments: [element]
-      };
     } else {
       // Folder icon
       item.iconPath = new vscode.ThemeIcon('folder');
@@ -106,8 +99,10 @@ export class SSHTreeDataProvider
   handleDrag(
     source: readonly TreeNode[],
     dataTransfer: vscode.DataTransfer,
-    token: vscode.CancellationToken
+    _token: vscode.CancellationToken
   ): void | Thenable<void> {
+    void _token;
+
     // Add dragged items to the data transfer object
     dataTransfer.set(
       this.dragMimeTypes[0],
@@ -121,8 +116,10 @@ export class SSHTreeDataProvider
   async handleDrop(
     target: TreeNode | undefined,
     dataTransfer: vscode.DataTransfer,
-    token: vscode.CancellationToken
+    _token: vscode.CancellationToken
   ): Promise<void> {
+    void _token;
+
     // Get the dragged items
     const transferItem = dataTransfer.get(this.dragMimeTypes[0]);
     if (!transferItem) {
@@ -144,19 +141,56 @@ export class SSHTreeDataProvider
       newParentId = target.parentId;
     }
 
-    // Move each node
+    // Dropping a node onto itself should be a no-op.
+    if (target && nodes.some(node => node.id === target.id)) {
+      return;
+    }
+
+    const movedIds: string[] = [];
+
+    // Move nodes across parents first
     for (const node of nodes) {
       try {
-        // Skip if dropping on itself or its own parent
-        if (node.parentId === newParentId) {
-          continue;
+        if (node.parentId !== newParentId) {
+          await this.configManager.moveNode(node.id, newParentId);
         }
-
-        await this.configManager.moveNode(node.id, newParentId);
+        movedIds.push(node.id);
       } catch (error) {
         vscode.window.showErrorMessage(`Failed to move "${node.label}": ${error}`);
       }
     }
+
+    if (movedIds.length === 0) {
+      return;
+    }
+
+    // Apply sibling order update so same-parent drag/drop can reorder items.
+    const siblings = newParentId
+      ? this.configManager.getChildren(newParentId)
+      : this.configManager.getRootNodes();
+
+    const remainingIds = siblings
+      .filter(node => !movedIds.includes(node.id))
+      .map(node => node.id);
+
+    let orderedIds: string[] = [];
+
+    if (target && target.type === TreeNodeType.HOST && !movedIds.includes(target.id)) {
+      const insertIndex = remainingIds.indexOf(target.id);
+      if (insertIndex === -1) {
+        orderedIds = [...remainingIds, ...movedIds];
+      } else {
+        orderedIds = [
+          ...remainingIds.slice(0, insertIndex),
+          ...movedIds,
+          ...remainingIds.slice(insertIndex)
+        ];
+      }
+    } else {
+      orderedIds = [...remainingIds, ...movedIds];
+    }
+
+    await this.configManager.reorderNodes(newParentId, orderedIds);
 
     // Refresh the tree
     this.refresh();

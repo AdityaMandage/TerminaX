@@ -89,6 +89,23 @@ export class TerminalManager {
   }
 
   /**
+   * Get terminal IDs for a specific host
+   */
+  getTerminalIdsByHost(hostId: string): string[] {
+    const terminalIds = this.terminalsByHost.get(hostId);
+    return terminalIds ? Array.from(terminalIds) : [];
+  }
+
+  /**
+   * Get full terminal info objects for a specific host
+   */
+  getTerminalInfosByHost(hostId: string): TerminalInfo[] {
+    return this.getTerminalIdsByHost(hostId)
+      .map(id => this.terminals.get(id))
+      .filter((info): info is TerminalInfo => info !== undefined);
+  }
+
+  /**
    * Get the pseudoterminal instance for a terminal ID
    */
   getPseudoTerminal(terminalId: string): SSHPseudoTerminal | undefined {
