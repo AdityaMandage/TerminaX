@@ -1,0 +1,217 @@
+{
+  "name": "terminax",
+  "displayName": "TerminaX",
+  "description": "Advanced SSH connection management for VSCode with MobaXterm-like features",
+  "version": "0.1.0",
+  "publisher": "terminax",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "terminax",
+          "title": "TerminaX",
+          "icon": "resources/icons/terminax.svg"
+        }
+      ]
+    },
+    "views": {
+      "terminax": [
+        {
+          "id": "terminax-hosts",
+          "name": "SSH Hosts",
+          "contextualTitle": "TerminaX Hosts"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "terminax.addHost",
+        "title": "Add SSH Host",
+        "icon": "$(add)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.addFolder",
+        "title": "Add Folder",
+        "icon": "$(new-folder)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.editHost",
+        "title": "Edit Host",
+        "icon": "$(edit)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.deleteHost",
+        "title": "Delete Host",
+        "icon": "$(trash)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.connect",
+        "title": "Connect",
+        "icon": "$(debug-start)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.connectSplit",
+        "title": "Connect in Split Terminal",
+        "icon": "$(split-horizontal)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.disconnect",
+        "title": "Disconnect",
+        "icon": "$(debug-stop)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.startBroadcast",
+        "title": "Start Broadcast Mode",
+        "icon": "$(broadcast)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.stopBroadcast",
+        "title": "Stop Broadcast Mode",
+        "icon": "$(circle-slash)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.broadcastCommand",
+        "title": "Send Broadcast Command",
+        "icon": "$(terminal)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.exportConfig",
+        "title": "Export Configuration",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.importConfig",
+        "title": "Import Configuration",
+        "category": "TerminaX"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "terminax.addHost",
+          "when": "view == terminax-hosts",
+          "group": "navigation@1"
+        },
+        {
+          "command": "terminax.addFolder",
+          "when": "view == terminax-hosts",
+          "group": "navigation@2"
+        },
+        {
+          "command": "terminax.refresh",
+          "when": "view == terminax-hosts",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "terminax.connect",
+          "when": "view == terminax-hosts && viewItem == host",
+          "group": "inline@1"
+        },
+        {
+          "command": "terminax.connectSplit",
+          "when": "view == terminax-hosts && viewItem == host",
+          "group": "connection@1"
+        },
+        {
+          "command": "terminax.disconnect",
+          "when": "view == terminax-hosts && viewItem == host",
+          "group": "connection@2"
+        },
+        {
+          "command": "terminax.editHost",
+          "when": "view == terminax-hosts && viewItem == host",
+          "group": "edit@1"
+        },
+        {
+          "command": "terminax.deleteHost",
+          "when": "view == terminax-hosts && viewItem == host",
+          "group": "edit@2"
+        },
+        {
+          "command": "terminax.addHost",
+          "when": "view == terminax-hosts && viewItem == folder",
+          "group": "folder@1"
+        },
+        {
+          "command": "terminax.addFolder",
+          "when": "view == terminax-hosts && viewItem == folder",
+          "group": "folder@2"
+        },
+        {
+          "command": "terminax.startBroadcast",
+          "when": "view == terminax-hosts && viewItem == folder",
+          "group": "broadcast@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "TerminaX",
+      "properties": {
+        "terminax.keepaliveInterval": {
+          "type": "number",
+          "default": 30000,
+          "description": "SSH keepalive interval in milliseconds"
+        },
+        "terminax.keepaliveCountMax": {
+          "type": "number",
+          "default": 3,
+          "description": "Maximum number of keepalive attempts"
+        },
+        "terminax.terminalScrollback": {
+          "type": "number",
+          "default": 1000,
+          "description": "Terminal scrollback buffer size"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.x",
+    "@types/ssh2": "^1.15.5",
+    "@types/uuid": "^10.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.x",
+    "@typescript-eslint/parser": "^6.x",
+    "@vscode/test-electron": "^2.3.0",
+    "eslint": "^8.x",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "ssh2": "^1.15.0",
+    "uuid": "^9.0.1"
+  }
+}
