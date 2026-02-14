@@ -117,7 +117,6 @@ While the tree view is focused:
 - 🚀 **SFTP Browser** - Browse remote files directly in VSCode
 - 🔀 **Port Forwarding** - GUI for managing port forwards
 - 🪜 **Jump Hosts** - Connect through bastion servers
-- 📝 **Command Snippets** - Save frequently used commands per host
 - ☁️ **Cloud Integration** - Import hosts from AWS, Azure, GCP
 
 ## Troubleshooting

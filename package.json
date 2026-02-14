@@ -26,8 +26,15 @@
       "terminax": [
         {
           "id": "terminax-hosts",
-          "name": "SSH Hosts",
+          "name": "Hosts",
+          "visibility": "visible",
           "contextualTitle": "TerminaX Hosts"
+        },
+        {
+          "id": "terminax-help",
+          "visibility": "collapsed",
+          "name": "Help",
+          "contextualTitle": "TerminaX Help"
         }
       ]
     },
@@ -111,6 +118,12 @@
         "category": "TerminaX"
       },
       {
+        "command": "terminax.searchTree",
+        "title": "Search Hosts Tree",
+        "icon": "$(search)",
+        "category": "TerminaX"
+      },
+      {
         "command": "terminax.startBroadcast",
         "title": "Start Broadcast Mode",
         "icon": "$(broadcast)",
@@ -129,6 +142,30 @@
         "category": "TerminaX"
       },
       {
+        "command": "terminax.setTerminalOpenMode",
+        "title": "Set Terminal Open Mode",
+        "icon": "$(layout)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.focusSession",
+        "title": "Focus Terminal Session",
+        "icon": "$(terminal)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.setMultiConnectLayout",
+        "title": "Set Multi-Connect Layout",
+        "icon": "$(layout-panel)",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.refreshHealthChecks",
+        "title": "Refresh Health Checks",
+        "icon": "$(pulse)",
+        "category": "TerminaX"
+      },
+      {
         "command": "terminax.exportConfig",
         "title": "Export Configuration",
         "category": "TerminaX"
@@ -136,6 +173,12 @@
       {
         "command": "terminax.importConfig",
         "title": "Import Configuration",
+        "category": "TerminaX"
+      },
+      {
+        "command": "terminax.openHelp",
+        "title": "Open Help",
+        "icon": "$(question)",
         "category": "TerminaX"
       }
     ],
@@ -175,6 +218,11 @@
           "command": "terminax.startBroadcast",
           "when": "view == terminax-hosts && !terminax.broadcastActive",
           "group": "navigation@7"
+        },
+        {
+          "command": "terminax.refreshHealthChecks",
+          "when": "view == terminax-hosts",
+          "group": "navigation@9"
         }
       ],
       "view/item/context": [
@@ -243,8 +291,72 @@
           "when": "view == terminax-hosts && viewItem == folder && terminax.broadcastActive",
           "group": "broadcast@3"
         }
+      ],
+      "commandPalette": [
+        {
+          "command": "terminax.addHostInFolder",
+          "when": "false"
+        },
+        {
+          "command": "terminax.connectSplit",
+          "when": "false"
+        },
+        {
+          "command": "terminax.focusSession",
+          "when": "false"
+        }
       ]
     },
+    "keybindings": [
+      {
+        "command": "terminax.connectMultiple",
+        "key": "ctrl+alt+shift+c",
+        "mac": "cmd+alt+shift+c",
+        "when": "focusedView == terminax-hosts"
+      },
+      {
+        "command": "terminax.searchTree",
+        "key": "ctrl+alt+shift+f",
+        "mac": "cmd+alt+shift+f",
+        "when": "focusedView == terminax-hosts"
+      },
+      {
+        "command": "terminax.addHost",
+        "key": "ctrl+alt+shift+h",
+        "mac": "cmd+alt+shift+h",
+        "when": "focusedView == terminax-hosts"
+      },
+      {
+        "command": "terminax.addFolder",
+        "key": "ctrl+alt+shift+n",
+        "mac": "cmd+alt+shift+n",
+        "when": "focusedView == terminax-hosts"
+      },
+      {
+        "command": "terminax.startBroadcast",
+        "key": "ctrl+alt+shift+b",
+        "mac": "cmd+alt+shift+b",
+        "when": "focusedView == terminax-hosts"
+      },
+      {
+        "command": "terminax.stopBroadcast",
+        "key": "ctrl+alt+shift+x",
+        "mac": "cmd+alt+shift+x",
+        "when": "focusedView == terminax-hosts"
+      },
+      {
+        "command": "terminax.openHelp",
+        "key": "ctrl+alt+shift+/",
+        "mac": "cmd+alt+shift+/",
+        "when": "focusedView == terminax-hosts"
+      },
+      {
+        "command": "terminax.refreshHealthChecks",
+        "key": "ctrl+alt+shift+k",
+        "mac": "cmd+alt+shift+k",
+        "when": "focusedView == terminax-hosts"
+      }
+    ],
     "configuration": {
       "title": "TerminaX",
       "properties": {
@@ -262,6 +374,40 @@
           "type": "number",
           "default": 1000,
           "description": "Terminal scrollback buffer size"
+        },
+        "terminax.terminalOpenMode": {
+          "type": "string",
+          "enum": [
+            "panel",
+            "editor"
+          ],
+          "default": "panel",
+          "description": "Where TerminaX opens terminals: panel (fullscreen panel) or editor (tab-style terminal editors)"
+        },
+        "terminax.multiConnectLayout": {
+          "type": "string",
+          "enum": [
+            "balanced",
+            "single-parent",
+            "tabs"
+          ],
+          "default": "balanced",
+          "description": "Layout strategy for multi-connect in panel mode: balanced auto-split grid, single parent split, or panel tabs."
+        },
+        "terminax.healthChecks.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable background SSH port health checks for host indicators."
+        },
+        "terminax.healthChecks.intervalMs": {
+          "type": "number",
+          "default": 60000,
+          "description": "Interval for background host health checks in milliseconds."
+        },
+        "terminax.healthChecks.timeoutMs": {
+          "type": "number",
+          "default": 5000,
+          "description": "Timeout for each health check probe in milliseconds."
         }
       }
     }

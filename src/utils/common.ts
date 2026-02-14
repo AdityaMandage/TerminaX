@@ -15,16 +15,28 @@ export function isValidHostname(hostname: string): boolean {
     return false;
   }
 
-  // Check if it's an IP address
-  const ipPattern = /^(\d{1,3}\.){3}\d{1,3}$/;
-  if (ipPattern.test(hostname)) {
-    const parts = hostname.split('.');
+  // Strip surrounding brackets for IPv6 like [::1]
+  let normalized = hostname;
+  if (normalized.startsWith('[') && normalized.endsWith(']')) {
+    normalized = normalized.slice(1, -1);
+  }
+
+  // Check if it's an IPv4 address
+  const ipv4Pattern = /^(\d{1,3}\.){3}\d{1,3}$/;
+  if (ipv4Pattern.test(normalized)) {
+    const parts = normalized.split('.');
     return parts.every(part => parseInt(part) >= 0 && parseInt(part) <= 255);
+  }
+
+  // Check if it's an IPv6 address (simplified check)
+  const ipv6Pattern = /^([0-9a-fA-F]{0,4}:){1,7}[0-9a-fA-F]{0,4}$|^::([0-9a-fA-F]{1,4}:){0,5}[0-9a-fA-F]{0,4}$|^([0-9a-fA-F]{1,4}:){1,6}:$|^::$/;
+  if (ipv6Pattern.test(normalized)) {
+    return true;
   }
 
   // Check if it's a valid hostname
   const hostnamePattern = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
-  return hostnamePattern.test(hostname);
+  return hostnamePattern.test(normalized);
 }
 
 /**

@@ -2,37 +2,75 @@ import * as vscode from 'vscode';
 import { TreeNode, TreeNodeType } from '../models/TreeNode';
 import { SSHHost } from '../models/SSHHost';
 import { SSHFolder } from '../models/SSHFolder';
+import { SessionNode, createSessionNode } from '../models/SessionNode';
 import { ConnectionStatus, ConnectionStateTracker } from '../models/ConnectionState';
+import { HostHealthState, HostHealthStatus } from '../models/HealthState';
 import { ConfigManager } from '../managers/ConfigManager';
+import { formatDuration } from '../utils/treeHelpers';
+
+/**
+ * Reader interface for active session info (avoids tight coupling to ConnectionManager)
+ */
+export interface SessionReader {
+  getTerminalCount(hostId: string): number;
+  getSessionInfos(hostId: string): Array<{ terminalId: string; hostId: string; createdAt: Date }>;
+  focusHostTerminal(hostId: string): void;
+}
 
 /**
  * Tree data provider for SSH hosts with drag-and-drop support
  */
 export class SSHTreeDataProvider
   implements
-    vscode.TreeDataProvider<TreeNode>,
-    vscode.TreeDragAndDropController<TreeNode> {
+  vscode.TreeDataProvider<TreeNode>,
+  vscode.TreeDragAndDropController<TreeNode> {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined | null | void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   // Drag and drop MIME type
   readonly dropMimeTypes = ['application/vnd.code.tree.terminax'];
   readonly dragMimeTypes = ['application/vnd.code.tree.terminax'];
+  private filterQuery: string = '';
+  private filteredVisibleNodeIds: Set<string> | null = null;
 
   constructor(
     private configManager: ConfigManager,
-    private connectionStateTracker: ConnectionStateTracker
-  ) {}
+    private connectionStateTracker: ConnectionStateTracker,
+    private healthStateReader?: {
+      getHostHealth(hostId: string): HostHealthState | undefined;
+    },
+    private sessionReader?: SessionReader
+  ) { }
+
+  setFilterQuery(query: string): void {
+    const normalized = query.trim().toLowerCase();
+    this.filterQuery = normalized;
+    this.rebuildFilterCache();
+    this.refresh();
+  }
+
+  getFilterQuery(): string {
+    return this.filterQuery;
+  }
 
   /**
    * Get the tree item representation of a node
    */
   getTreeItem(element: TreeNode): vscode.TreeItem {
+    // Handle session nodes
+    if (element.type === TreeNodeType.SESSION) {
+      return this.getSessionTreeItem(element as SessionNode);
+    }
+
+    const sessionCount = this.sessionReader?.getTerminalCount(element.id) ?? 0;
+
     const item = new vscode.TreeItem(
       element.label,
       element.type === TreeNodeType.FOLDER
         ? vscode.TreeItemCollapsibleState.Collapsed
-        : vscode.TreeItemCollapsibleState.None
+        : sessionCount > 0
+          ? vscode.TreeItemCollapsibleState.Collapsed
+          : vscode.TreeItemCollapsibleState.None
     );
 
     // Set context value for context menu filtering
@@ -42,13 +80,17 @@ export class SSHTreeDataProvider
     if (element.type === TreeNodeType.HOST) {
       const host = element as SSHHost;
       const state = this.connectionStateTracker.getState(element.id);
+      const health = this.healthStateReader?.getHostHealth(element.id);
 
       // Status-based icon
-      item.iconPath = this.getHostIcon(state?.status);
-      item.tooltip = this.getHostTooltip(host, state);
+      item.iconPath = this.getHostIcon(state?.status, health);
+      item.tooltip = this.getHostTooltip(host, state, health);
 
-      // Description shows username@host
-      item.description = `${host.config.username}@${host.config.host}`;
+      // Description shows username@host and session count
+      const baseDesc = this.getHostDescription(host, health);
+      item.description = sessionCount > 0
+        ? `${baseDesc} — ${sessionCount} session${sessionCount > 1 ? 's' : ''}`
+        : baseDesc;
     } else {
       // Folder icon
       item.iconPath = new vscode.ThemeIcon('folder');
@@ -64,16 +106,140 @@ export class SSHTreeDataProvider
    * Get children of a node
    */
   getChildren(element?: TreeNode): Thenable<TreeNode[]> {
+    const isFiltering = this.filterQuery.length > 0 && this.filteredVisibleNodeIds !== null;
+
     if (!element) {
       // Return root nodes
-      return Promise.resolve(this.configManager.getRootNodes());
+      const rootNodes = this.configManager.getRootNodes();
+      if (!isFiltering) {
+        return Promise.resolve(rootNodes);
+      }
+
+      return Promise.resolve(
+        rootNodes.filter(node => this.filteredVisibleNodeIds!.has(node.id))
+      );
     }
 
     if (element.type === TreeNodeType.FOLDER) {
-      return Promise.resolve(this.configManager.getChildren(element.id));
+      const children = this.configManager.getChildren(element.id);
+      if (!isFiltering) {
+        return Promise.resolve(children);
+      }
+
+      return Promise.resolve(
+        children.filter(node => this.filteredVisibleNodeIds!.has(node.id))
+      );
+    }
+
+    // HOST nodes: return active session children
+    if (element.type === TreeNodeType.HOST && this.sessionReader) {
+      const sessions = this.sessionReader.getSessionInfos(element.id);
+      if (sessions.length > 0) {
+        return Promise.resolve(
+          sessions.map((s, i) =>
+            createSessionNode(
+              s.terminalId,
+              s.hostId,
+              `Session ${i + 1}`,
+              s.createdAt
+            )
+          )
+        );
+      }
     }
 
     return Promise.resolve([]);
+  }
+
+  private rebuildFilterCache(): void {
+    if (!this.filterQuery) {
+      this.filteredVisibleNodeIds = null;
+      return;
+    }
+
+    const visibleIds = new Set<string>();
+    const allNodes = this.configManager.getAllNodes();
+
+    for (const node of allNodes) {
+      if (this.nodeMatchesFilter(node)) {
+        visibleIds.add(node.id);
+        this.includeAncestorChain(node, visibleIds);
+
+        // If a folder matches by name/path, include all descendants for easier navigation.
+        if (node.type === TreeNodeType.FOLDER) {
+          this.includeDescendants(node.id, visibleIds);
+        }
+      }
+    }
+
+    this.filteredVisibleNodeIds = visibleIds;
+  }
+
+  private includeAncestorChain(node: TreeNode, visibleIds: Set<string>): void {
+    let currentParentId = node.parentId;
+    while (currentParentId) {
+      const parent = this.configManager.getNode(currentParentId);
+      if (!parent) {
+        break;
+      }
+
+      visibleIds.add(parent.id);
+      currentParentId = parent.parentId;
+    }
+  }
+
+  private includeDescendants(folderId: string, visibleIds: Set<string>): void {
+    const children = this.configManager.getChildren(folderId);
+    for (const child of children) {
+      visibleIds.add(child.id);
+      if (child.type === TreeNodeType.FOLDER) {
+        this.includeDescendants(child.id, visibleIds);
+      }
+    }
+  }
+
+  private nodeMatchesFilter(node: TreeNode): boolean {
+    const query = this.filterQuery;
+    if (!query) {
+      return true;
+    }
+
+    const path = this.getNodePath(node).toLowerCase();
+    if (path.includes(query) || node.label.toLowerCase().includes(query)) {
+      return true;
+    }
+
+    if (node.type === TreeNodeType.HOST) {
+      const host = node as SSHHost;
+      const hostFields = [
+        host.config.host,
+        host.config.username,
+        host.config.port.toString()
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      return hostFields.includes(query);
+    }
+
+    return false;
+  }
+
+  private getNodePath(node: TreeNode): string {
+    const pathParts: string[] = [node.label];
+    let currentParentId = node.parentId;
+
+    while (currentParentId) {
+      const parent = this.configManager.getNode(currentParentId);
+      if (!parent) {
+        break;
+      }
+
+      pathParts.unshift(parent.label);
+      currentParentId = parent.parentId;
+    }
+
+    return pathParts.join(' / ');
   }
 
   /**
@@ -102,6 +268,7 @@ export class SSHTreeDataProvider
     _token: vscode.CancellationToken
   ): void | Thenable<void> {
     void _token;
+
 
     // Add dragged items to the data transfer object
     dataTransfer.set(
@@ -199,7 +366,10 @@ export class SSHTreeDataProvider
   /**
    * Get icon for a host based on connection status
    */
-  private getHostIcon(status?: ConnectionStatus): vscode.ThemeIcon {
+  private getHostIcon(
+    status?: ConnectionStatus,
+    health?: HostHealthState
+  ): vscode.ThemeIcon {
     switch (status) {
       case ConnectionStatus.CONNECTED:
         return new vscode.ThemeIcon(
@@ -212,7 +382,26 @@ export class SSHTreeDataProvider
           new vscode.ThemeColor('terminal.ansiRed')
         );
       default:
-        // DISCONNECTED or undefined
+        // Disconnected state uses health indicator when available.
+        if (health?.status === HostHealthStatus.CHECKING) {
+          return new vscode.ThemeIcon('loading~spin');
+        }
+
+        if (health?.status === HostHealthStatus.HEALTHY) {
+          return new vscode.ThemeIcon(
+            'circle-filled',
+            new vscode.ThemeColor('terminal.ansiBlue')
+          );
+        }
+
+        if (health?.status === HostHealthStatus.UNHEALTHY) {
+          return new vscode.ThemeIcon(
+            'warning',
+            new vscode.ThemeColor('terminal.ansiYellow')
+          );
+        }
+
+        // Unknown health or never checked.
         return new vscode.ThemeIcon(
           'circle-outline',
           new vscode.ThemeColor('terminal.ansiBrightBlack')
@@ -229,42 +418,98 @@ export class SSHTreeDataProvider
       status: ConnectionStatus;
       connectedAt?: Date;
       lastError?: string;
-    }
+    },
+    health?: HostHealthState
   ): string {
     const baseInfo = `${host.config.username}@${host.config.host}:${host.config.port}`;
+    const healthInfo = this.formatHealthTooltip(health);
 
     if (!state || state.status === ConnectionStatus.DISCONNECTED) {
-      return baseInfo;
+      return healthInfo ? `${baseInfo}\n${healthInfo}` : baseInfo;
     }
 
     if (state.status === ConnectionStatus.CONNECTED) {
       const duration = state.connectedAt
-        ? this.formatDuration(Date.now() - state.connectedAt.getTime())
+        ? formatDuration(Date.now() - state.connectedAt.getTime())
         : '';
-      return `${baseInfo}\n🟢 Connected${duration ? ` for ${duration}` : ''}`;
+      const connectedLine = `Connected${duration ? ` for ${duration}` : ''}`;
+      return healthInfo
+        ? `${baseInfo}\n${connectedLine}\n${healthInfo}`
+        : `${baseInfo}\n${connectedLine}`;
     }
 
     if (state.status === ConnectionStatus.ERROR) {
-      return `${baseInfo}\n🔴 Error: ${state.lastError || 'Connection lost'}`;
+      const errorLine = `Error: ${state.lastError || 'Connection lost'}`;
+      return healthInfo
+        ? `${baseInfo}\n${errorLine}\n${healthInfo}`
+        : `${baseInfo}\n${errorLine}`;
     }
 
     return baseInfo;
   }
 
-  /**
-   * Format duration in human-readable format
-   */
-  private formatDuration(ms: number): string {
-    const seconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
+  private getHostDescription(host: SSHHost, health?: HostHealthState): string {
+    const base = `${host.config.username}@${host.config.host}`;
+    if (!health) {
+      return base;
+    }
 
-    if (hours > 0) {
-      return `${hours}h ${minutes % 60}m`;
+    if (health.status === HostHealthStatus.HEALTHY && health.latencyMs !== undefined) {
+      return `${base} (${health.latencyMs}ms)`;
     }
-    if (minutes > 0) {
-      return `${minutes}m`;
+
+    if (health.status === HostHealthStatus.UNHEALTHY) {
+      return `${base} (unhealthy)`;
     }
-    return `${seconds}s`;
+
+    if (health.status === HostHealthStatus.CHECKING) {
+      return `${base} (checking...)`;
+    }
+
+    return base;
   }
+
+  private formatHealthTooltip(health?: HostHealthState): string | undefined {
+    if (!health) {
+      return undefined;
+    }
+
+    switch (health.status) {
+      case HostHealthStatus.CHECKING:
+        return 'Health: checking...';
+      case HostHealthStatus.HEALTHY: {
+        const latency = health.latencyMs !== undefined ? `${health.latencyMs}ms` : 'reachable';
+        return `Health: reachable (${latency})`;
+      }
+      case HostHealthStatus.UNHEALTHY:
+        return `Health: ${health.error || 'unreachable'}`;
+      default:
+        return 'Health: unknown';
+    }
+  }
+
+  /**
+   * Render a session child node
+   */
+  private getSessionTreeItem(session: SessionNode): vscode.TreeItem {
+    const duration = formatDuration(Date.now() - session.createdAt.getTime());
+    const item = new vscode.TreeItem(
+      `${session.label} (${duration})`,
+      vscode.TreeItemCollapsibleState.None
+    );
+    item.contextValue = TreeNodeType.SESSION;
+    item.iconPath = new vscode.ThemeIcon(
+      'terminal',
+      new vscode.ThemeColor('terminal.ansiGreen')
+    );
+    item.tooltip = `Active session — started ${session.createdAt.toLocaleTimeString()}`;
+    // Click-to-focus: use the built-in command on the session reader
+    item.command = {
+      command: 'terminax.focusSession',
+      title: 'Focus Terminal',
+      arguments: [session.hostId]
+    };
+    return item;
+  }
+
 }

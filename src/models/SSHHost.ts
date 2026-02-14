@@ -75,3 +75,10 @@ export function createSSHHost(
     }
   };
 }
+
+/**
+ * Type guard: is the given TreeNode an SSHHost?
+ */
+export function isSSHHost(node: TreeNode): node is SSHHost {
+  return node.type === TreeNodeType.HOST;
+}

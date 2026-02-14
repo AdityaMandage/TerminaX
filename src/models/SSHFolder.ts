@@ -8,9 +8,6 @@ export interface SSHFolder extends TreeNode {
 
   /** Whether the folder is expanded in the tree */
   expanded: boolean;
-
-  /** Array of child node IDs */
-  children: string[];
 }
 
 /**
@@ -27,7 +24,13 @@ export function createSSHFolder(
     label,
     parentId,
     sortOrder: 0,
-    expanded: true,
-    children: []
+    expanded: true
   };
+}
+
+/**
+ * Type guard: is the given TreeNode an SSHFolder?
+ */
+export function isSSHFolder(node: TreeNode): node is SSHFolder {
+  return node.type === TreeNodeType.FOLDER;
 }

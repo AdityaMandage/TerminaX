@@ -3,7 +3,8 @@
  */
 export enum TreeNodeType {
   FOLDER = 'folder',
-  HOST = 'host'
+  HOST = 'host',
+  SESSION = 'session'
 }
 
 /**

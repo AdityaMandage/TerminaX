@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { Client, ClientChannel, ConnectConfig } from 'ssh2';
-import * as fs from 'fs';
+import * as fs from 'fs/promises';
 import { SSHHost } from '../models/SSHHost';
 import { ConnectionMetadata, ConnectionStatus } from '../models/ConnectionState';
 import { CredentialService } from '../services/CredentialService';
@@ -57,6 +57,13 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
     if (this.stream) {
       this.stream.write(data);
     }
+  }
+
+  /**
+   * Whether the SSH stream is currently active and can receive input
+   */
+  isStreamActive(): boolean {
+    return this.stream !== null && !this.isCleanedUp;
   }
 
   /**
@@ -120,6 +127,8 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
         this.passwordOverride = undefined;
         if (password) {
           config.password = password;
+        } else {
+          throw new Error('Password entry cancelled');
         }
         break;
       }
@@ -127,7 +136,7 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
       case 'keyfile': {
         if (this.host.config.privateKeyPath) {
           try {
-            const privateKey = fs.readFileSync(this.host.config.privateKeyPath);
+            const privateKey = await fs.readFile(this.host.config.privateKeyPath);
             config.privateKey = privateKey;
 
             // Use stored passphrase if available; prompt only when key appears encrypted.
@@ -268,10 +277,11 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
       return;
     }
 
-    // Connection lost unexpectedly
-    this.writeEmitter.fire(`\r\n\n⚠️  Connection lost\r\n`);
+    // Connection lost unexpectedly — keep terminal open for reconnect
+    this.writeEmitter.fire(`\r\n\n⚠️  Connection lost — network or VPN issue detected\r\n`);
     this.updateStatus(ConnectionStatus.ERROR, { error: 'Connection lost' });
-    this.closeEmitter.fire(1);
+    this.cleanupConnection();
+    void this.promptReconnect();
   }
 
   /**
@@ -309,6 +319,16 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
 
       this.passwordOverride = replacementPassword;
       await this.connect();
+      return;
+    }
+
+    // For known network errors on established connections, offer reconnect
+    const isNetworkError = /ETIMEDOUT|ECONNRESET|EPIPE|EHOSTUNREACH|ENETUNREACH|socket hang up/i.test(errorMsg);
+    if (this.hasEverConnected && isNetworkError) {
+      this.writeEmitter.fire(`\r\n\n⚠️  ${interpretedError.friendly}\r\n`);
+      this.updateStatus(ConnectionStatus.ERROR, { error: interpretedError.friendly });
+      this.cleanupConnection();
+      void this.promptReconnect();
       return;
     }
 
@@ -364,6 +384,37 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
       this.client.removeAllListeners();
       this.client.end();
       this.client = null;
+    }
+  }
+
+  /**
+   * Clear SSH connection state but keep the terminal open (for reconnect)
+   */
+  private cleanupConnection(): void {
+    this.teardownConnection();
+    this.streamClosedGracefully = false;
+  }
+
+  /**
+   * Prompt user to reconnect or close after unexpected disconnect
+   */
+  private async promptReconnect(): Promise<void> {
+    this.writeEmitter.fire(`\r\n🔄 Press any key or use the prompt to reconnect...\r\n`);
+
+    const action = await vscode.window.showWarningMessage(
+      `${this.host.label}: Connection lost`,
+      'Reconnect',
+      'Close Terminal'
+    );
+
+    if (action === 'Reconnect') {
+      this.writeEmitter.fire(`\r\n🔌 Reconnecting to ${this.host.config.host}...\r\n`);
+      this.hasRetriedAuthentication = false;
+      this.hasShownErrorNotification = false;
+      await this.connect();
+    } else {
+      this.closeEmitter.fire(1);
+      this.cleanup();
     }
   }
 

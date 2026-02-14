@@ -152,7 +152,7 @@ export class ConfigManager {
     this.nodesMap.delete(id);
 
     // Reorder siblings
-    await this.reorderSiblings(node.parentId);
+    this.reorderSiblings(node.parentId);
     await this.saveConfig();
   }
 
@@ -187,7 +187,7 @@ export class ConfigManager {
     node.sortOrder = newSiblings.filter(n => n.id !== nodeId).length;
 
     // Reorder old siblings
-    await this.reorderSiblings(oldParentId);
+    this.reorderSiblings(oldParentId);
 
     await this.saveConfig();
   }
@@ -195,7 +195,7 @@ export class ConfigManager {
   /**
    * Reorder siblings under a parent
    */
-  private async reorderSiblings(parentId: string | null): Promise<void> {
+  private reorderSiblings(parentId: string | null): void {
     const siblings = parentId
       ? this.getChildren(parentId)
       : this.getRootNodes();
@@ -291,8 +291,7 @@ export class ConfigManager {
           type: TreeNodeType.FOLDER,
           parentId,
           sortOrder,
-          expanded: Boolean(nodeRecord.expanded ?? true),
-          children: []
+          expanded: Boolean(nodeRecord.expanded ?? true)
         };
         parsedNodes.push(folder);
       }
@@ -450,13 +449,34 @@ export class ConfigManager {
   }
 
   /**
-   * Import configuration from JSON
+   * Import configuration from JSON (creates a backup first)
    */
   async importConfig(configJson: string): Promise<void> {
+    // Backup current config before overwriting
+    await this.context.globalState.update(
+      'terminax.configBackup',
+      JSON.stringify(this.config)
+    );
+
     const imported = JSON.parse(configJson) as unknown;
     this.config = this.normalizeAndValidateImportedConfig(imported);
     this.buildNodesMap();
     await this.saveConfig();
+  }
+
+  /**
+   * Restore configuration from the last backup (created before import)
+   */
+  async restoreConfigBackup(): Promise<boolean> {
+    const backupJson = this.context.globalState.get<string>('terminax.configBackup');
+    if (!backupJson) {
+      return false;
+    }
+    const backup = JSON.parse(backupJson) as unknown;
+    this.config = this.normalizeAndValidateImportedConfig(backup);
+    this.buildNodesMap();
+    await this.saveConfig();
+    return true;
   }
 
   /**

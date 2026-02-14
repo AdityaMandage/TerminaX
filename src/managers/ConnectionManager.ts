@@ -6,21 +6,30 @@ import {
   ConnectionStateTracker
 } from '../models/ConnectionState';
 import { SSHPseudoTerminal } from '../providers/SSHPseudoTerminal';
-import { TerminalManager } from './TerminalManager';
+import { TerminalInfo, TerminalManager } from './TerminalManager';
 import { CredentialService } from '../services/CredentialService';
 import { SSHTreeDataProvider } from '../providers/SSHTreeDataProvider';
+
+export interface SessionSnapshot {
+  terminalId: string;
+  hostId: string;
+  status: ConnectionStatus;
+  createdAt: Date;
+}
 
 /**
  * Manages SSH connections and their lifecycle
  */
-export class ConnectionManager {
-  public terminalManager: TerminalManager;
+export class ConnectionManager implements vscode.Disposable {
+  private terminalManager: TerminalManager;
   private stateTracker: ConnectionStateTracker;
   private treeProvider?: SSHTreeDataProvider;
   private terminalStatuses: Map<string, ConnectionStatus> = new Map();
   private hostLastError: Map<string, string> = new Map();
   private broadcastHostIds: Set<string> = new Set();
   private broadcastActive: boolean = false;
+  private onDidChangeSessionsEmitter = new vscode.EventEmitter<void>();
+  readonly onDidChangeSessions = this.onDidChangeSessionsEmitter.event;
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -30,6 +39,7 @@ export class ConnectionManager {
     this.terminalManager = new TerminalManager();
     this.stateTracker = new ConnectionStateTracker();
     this.treeProvider = treeProvider;
+    context.subscriptions.push(this.onDidChangeSessionsEmitter);
 
     // Listen to terminal lifecycle events
     context.subscriptions.push(
@@ -37,6 +47,32 @@ export class ConnectionManager {
         this.handleTerminalClose(terminal);
       })
     );
+  }
+
+  dispose(): void {
+    this.stopBroadcast();
+    this.terminalManager.dispose();
+    this.terminalStatuses.clear();
+    this.hostLastError.clear();
+    this.stateTracker.clearAll();
+  }
+
+  /**
+   * Get the number of active terminals for a specific host
+   */
+  getTerminalCount(hostId: string): number {
+    return this.terminalManager.getTerminalCount(hostId);
+  }
+
+  /**
+   * Get lightweight session metadata for tree rendering
+   */
+  getSessionInfos(hostId: string): Array<{ terminalId: string; hostId: string; createdAt: Date }> {
+    return this.terminalManager.getTerminalInfosByHost(hostId).map(info => ({
+      terminalId: info.terminalId,
+      hostId: info.hostId,
+      createdAt: info.createdAt
+    }));
   }
 
   /**
@@ -49,8 +85,18 @@ export class ConnectionManager {
   /**
    * Connect to an SSH host
    */
-  async connect(host: SSHHost, splitTerminal: boolean = false): Promise<void> {
+  async connect(
+    host: SSHHost,
+    splitTerminal: boolean = false,
+    splitParentTerminal?: vscode.Terminal,
+    openModeOverride?: 'panel' | 'editor'
+  ): Promise<vscode.Terminal | undefined> {
     try {
+      const configuredMode = vscode.workspace
+        .getConfiguration('terminax')
+        .get<'panel' | 'editor'>('terminalOpenMode', 'panel');
+      const terminalOpenMode = openModeOverride || configuredMode;
+
       // Generate unique terminal ID
       const terminalId = `terminax-${host.id}-${Date.now()}`;
 
@@ -69,13 +115,20 @@ export class ConnectionManager {
         name: `SSH: ${host.label}`,
         pty,
         iconPath: new vscode.ThemeIcon('server'),
-        location: vscode.TerminalLocation.Panel
+        location:
+          terminalOpenMode === 'editor'
+            ? vscode.TerminalLocation.Editor
+            : vscode.TerminalLocation.Panel
       };
 
       // If split terminal, create it beside the active terminal
-      if (splitTerminal && vscode.window.activeTerminal) {
+      if (
+        splitTerminal &&
+        terminalOpenMode === 'panel' &&
+        (splitParentTerminal || vscode.window.activeTerminal)
+      ) {
         terminalOptions.location = {
-          parentTerminal: vscode.window.activeTerminal
+          parentTerminal: splitParentTerminal || vscode.window.activeTerminal!
         };
       }
 
@@ -84,19 +137,23 @@ export class ConnectionManager {
       // Register with terminal manager
       this.terminalManager.addTerminal(terminalId, terminal, host.id, pty);
       this.terminalStatuses.set(terminalId, ConnectionStatus.DISCONNECTED);
+      this.recomputeHostState(host.id);
+      this.emitSessionChange();
 
       // Show terminal and bring to focus
       terminal.show(false);
 
       // For non-split, bring panel to focus and maximize workspace area
-      if (!splitTerminal) {
+      if (!splitTerminal && terminalOpenMode === 'panel') {
         await this.focusAndMaximizeTerminalPanel();
       }
 
+      return terminal;
     } catch (error) {
       vscode.window.showErrorMessage(
         `Failed to connect to ${host.label}: ${error}`
       );
+      return undefined;
     }
   }
 
@@ -105,6 +162,7 @@ export class ConnectionManager {
    */
   disconnect(hostId: string): void {
     this.terminalManager.disposeHostTerminals(hostId);
+    this.emitSessionChange();
   }
 
   /**
@@ -123,6 +181,7 @@ export class ConnectionManager {
     }
 
     this.recomputeHostState(hostId);
+    this.emitSessionChange();
   }
 
   /**
@@ -136,6 +195,7 @@ export class ConnectionManager {
         this.terminalStatuses.delete(terminalId);
         this.terminalManager.removeTerminal(terminalId);
         this.recomputeHostState(info.hostId);
+        this.emitSessionChange();
       }
     }
   }
@@ -189,7 +249,7 @@ export class ConnectionManager {
   /**
    * Focus and maximize terminal panel for better default visibility
    */
-  private async focusAndMaximizeTerminalPanel(): Promise<void> {
+  private async focusAndMaximizeTerminalPanel(): Promise<boolean> {
     try {
       await vscode.commands.executeCommand('workbench.action.positionPanelBottom');
     } catch {
@@ -204,14 +264,25 @@ export class ConnectionManager {
     // Prefer non-toggle maximize command so behavior is deterministic per connect.
     try {
       await vscode.commands.executeCommand('workbench.action.maximizePanel');
+      return true;
     } catch {
       // Fallback for VSCode builds that only expose toggle.
       try {
         await vscode.commands.executeCommand('workbench.action.toggleMaximizedPanel');
+        return true;
       } catch {
         // Keep focus behavior only if maximize command is unavailable.
       }
     }
+
+    return false;
+  }
+
+  /**
+   * Ensure panel is focused and maximized (best effort)
+   */
+  async ensurePanelMaximized(): Promise<boolean> {
+    return this.focusAndMaximizeTerminalPanel();
   }
 
   private refreshTree(): void {
@@ -224,6 +295,7 @@ export class ConnectionManager {
   startBroadcast(hostIds: string[]): number {
     this.broadcastHostIds = new Set(hostIds);
     this.broadcastActive = this.broadcastHostIds.size > 0;
+    this.emitSessionChange();
     return this.broadcastHostIds.size;
   }
 
@@ -233,6 +305,7 @@ export class ConnectionManager {
   stopBroadcast(): void {
     this.broadcastHostIds.clear();
     this.broadcastActive = false;
+    this.emitSessionChange();
   }
 
   /**
@@ -256,12 +329,108 @@ export class ConnectionManager {
     for (const hostId of this.broadcastHostIds) {
       const terminals = this.terminalManager.getTerminalInfosByHost(hostId);
       for (const terminalInfo of terminals) {
-        terminalInfo.pty.handleInput(payload);
-        sent += 1;
+        if (terminalInfo.pty.isStreamActive()) {
+          terminalInfo.pty.handleInput(payload);
+          sent += 1;
+        }
       }
     }
 
     return { sent };
+  }
+
+  /**
+   * Send a command to tracked sessions for selected hosts
+   */
+  sendCommandToHosts(hostIds: string[], command: string): { sent: number } {
+    if (hostIds.length === 0) {
+      return { sent: 0 };
+    }
+
+    const payload = command.endsWith('\n') ? command : `${command}\n`;
+    let sent = 0;
+    const uniqueHostIds = new Set(hostIds);
+
+    for (const hostId of uniqueHostIds) {
+      const terminals = this.terminalManager.getTerminalInfosByHost(hostId);
+      for (const terminalInfo of terminals) {
+        if (terminalInfo.pty.isStreamActive()) {
+          terminalInfo.pty.handleInput(payload);
+          sent += 1;
+        }
+      }
+    }
+
+    return { sent };
+  }
+
+  /**
+   * Send command to active tracked SSH terminal only
+   */
+  sendCommandToActiveTerminal(command: string): boolean {
+    const activeTerminal = vscode.window.activeTerminal;
+    if (!activeTerminal) {
+      return false;
+    }
+
+    const terminalId = this.terminalManager.getTerminalId(activeTerminal);
+    if (!terminalId) {
+      return false;
+    }
+
+    const pty = this.terminalManager.getPseudoTerminal(terminalId);
+    if (!pty || !pty.isStreamActive()) {
+      return false;
+    }
+
+    const payload = command.endsWith('\n') ? command : `${command}\n`;
+    pty.handleInput(payload);
+    return true;
+  }
+
+  /**
+   * Focus the first tracked terminal for a host
+   */
+  focusHostTerminal(hostId: string): boolean {
+    const terminals = this.terminalManager.getTerminalsByHost(hostId);
+    if (terminals.length === 0) {
+      return false;
+    }
+
+    terminals[0].show(false);
+    return true;
+  }
+
+  /**
+   * Focus a tracked terminal by terminal ID
+   */
+  focusTerminalById(terminalId: string): boolean {
+    const terminalInfo = this.terminalManager.getTerminalInfo(terminalId);
+    if (!terminalInfo) {
+      return false;
+    }
+
+    terminalInfo.terminal.show(false);
+    return true;
+  }
+
+  /**
+   * Get a snapshot of tracked sessions for UI views
+   */
+  getSessionSnapshots(): SessionSnapshot[] {
+    return this.terminalManager.getAllTerminals().map((info: TerminalInfo) => ({
+      terminalId: info.terminalId,
+      hostId: info.hostId,
+      status: this.terminalStatuses.get(info.terminalId) || ConnectionStatus.DISCONNECTED,
+      createdAt: info.createdAt
+    }));
+  }
+
+  /**
+   * Get hosts currently in broadcast scope
+   */
+  getBroadcastHostIds(): string[] {
+    return Array.from(this.broadcastHostIds);
   }
 
   /**
@@ -283,5 +452,9 @@ export class ConnectionManager {
    */
   getStateTracker(): ConnectionStateTracker {
     return this.stateTracker;
+  }
+
+  private emitSessionChange(): void {
+    this.onDidChangeSessionsEmitter.fire();
   }
 }

@@ -5,6 +5,7 @@ import { ConfigManager } from '../managers/ConfigManager';
 import { ConnectionManager } from '../managers/ConnectionManager';
 import { CredentialService } from '../services/CredentialService';
 import { SSHTreeDataProvider } from '../providers/SSHTreeDataProvider';
+import { registerSafeCommand } from '../utils/commandHelpers';
 import { generateUUID, isValidHostname, isValidPort } from '../utils/common';
 
 /**
@@ -15,98 +16,89 @@ export function registerHostCommands(
   configManager: ConfigManager,
   connectionManager: ConnectionManager,
   credentialService: CredentialService,
-  treeProvider: SSHTreeDataProvider
+  treeProvider: SSHTreeDataProvider,
+  onConfigChanged?: () => void
 ): void {
 
   // Add new host
-  context.subscriptions.push(
-    vscode.commands.registerCommand('terminax.addHost', async () => {
-      const host = await promptForHostConfig();
-      if (!host) {
-        return;
-      }
+  registerSafeCommand(context, 'terminax.addHost', async () => {
+    const host = await promptForHostConfig();
+    if (!host) {
+      return;
+    }
 
-      await configManager.addNode(host);
-      treeProvider.refresh();
+    await configManager.addNode(host);
+    treeProvider.refresh();
+    onConfigChanged?.();
 
-      vscode.window.showInformationMessage(`Host "${host.label}" added successfully`);
-    })
-  );
+    vscode.window.showInformationMessage(`Host "${host.label}" added successfully`);
+  });
 
   // Add new host to a specific folder
-  context.subscriptions.push(
-    vscode.commands.registerCommand('terminax.addHostInFolder', async (folder?: SSHFolder) => {
-      const host = await promptForHostConfig();
-      if (!host) {
-        return;
-      }
+  registerSafeCommand(context, 'terminax.addHostInFolder', async (folder?: SSHFolder) => {
+    const host = await promptForHostConfig();
+    if (!host) {
+      return;
+    }
 
-      if (folder) {
-        host.parentId = folder.id;
-      }
+    if (folder) {
+      host.parentId = folder.id;
+    }
 
-      await configManager.addNode(host);
-      treeProvider.refresh();
+    await configManager.addNode(host);
+    treeProvider.refresh();
+    onConfigChanged?.();
 
-      vscode.window.showInformationMessage(`Host "${host.label}" added successfully`);
-    })
-  );
+    vscode.window.showInformationMessage(`Host "${host.label}" added successfully`);
+  });
 
   // Edit host
-  context.subscriptions.push(
-    vscode.commands.registerCommand('terminax.editHost', async (host: SSHHost) => {
-      const updated = await promptForHostConfig(host);
-      if (!updated) {
-        return;
-      }
+  registerSafeCommand(context, 'terminax.editHost', async (host: SSHHost) => {
+    const updated = await promptForHostConfig(host);
+    if (!updated) {
+      return;
+    }
 
-      await configManager.updateNode(host.id, updated);
-      treeProvider.refresh();
+    await configManager.updateNode(host.id, updated);
+    treeProvider.refresh();
+    onConfigChanged?.();
 
-      vscode.window.showInformationMessage(`Host "${updated.label}" updated successfully`);
-    })
-  );
+    vscode.window.showInformationMessage(`Host "${updated.label}" updated successfully`);
+  });
 
   // Delete host
-  context.subscriptions.push(
-    vscode.commands.registerCommand('terminax.deleteHost', async (host: SSHHost) => {
-      const confirm = await vscode.window.showWarningMessage(
-        `Are you sure you want to delete "${host.label}"?`,
-        { modal: true },
-        'Delete'
-      );
+  registerSafeCommand(context, 'terminax.deleteHost', async (host: SSHHost) => {
+    const confirm = await vscode.window.showWarningMessage(
+      `Are you sure you want to delete "${host.label}"?`,
+      { modal: true },
+      'Delete'
+    );
 
-      if (confirm === 'Delete') {
-        await configManager.deleteNode(host.id);
-        await credentialService.deleteAllCredentials(host.id);
-        treeProvider.refresh();
+    if (confirm === 'Delete') {
+      await configManager.deleteNode(host.id);
+      await credentialService.deleteAllCredentials(host.id);
+      treeProvider.refresh();
+      onConfigChanged?.();
 
-        vscode.window.showInformationMessage(`Host "${host.label}" deleted`);
-      }
-    })
-  );
+      vscode.window.showInformationMessage(`Host "${host.label}" deleted`);
+    }
+  });
 
   // Connect to host
-  context.subscriptions.push(
-    vscode.commands.registerCommand('terminax.connect', async (host: SSHHost) => {
-      await connectionManager.connect(host);
-    })
-  );
+  registerSafeCommand(context, 'terminax.connect', async (host: SSHHost) => {
+    await connectionManager.connect(host);
+  });
 
   // Connect in split terminal
-  context.subscriptions.push(
-    vscode.commands.registerCommand('terminax.connectSplit', async (host: SSHHost) => {
-      await connectionManager.connect(host, true);
-    })
-  );
+  registerSafeCommand(context, 'terminax.connectSplit', async (host: SSHHost) => {
+    await connectionManager.connect(host, true);
+  });
 
   // Disconnect from host
-  context.subscriptions.push(
-    vscode.commands.registerCommand('terminax.disconnect', async (host: SSHHost) => {
-      connectionManager.disconnect(host.id);
-      vscode.window.showInformationMessage(`Disconnected from "${host.label}"`);
-    })
-  );
+  registerSafeCommand(context, 'terminax.disconnect', async (host: SSHHost) => {
+    connectionManager.disconnect(host.id);
+    vscode.window.showInformationMessage(`Disconnected from "${host.label}"`);
+  });
 }
 
 /**
@@ -124,7 +116,7 @@ async function promptForHostConfig(existing?: SSHHost): Promise<SSHHost | undefi
     value: existing?.label,
     ignoreFocusOut: true,
     validateInput: (value) => {
-      if (!value) {
+      if (!value.trim()) {
         return 'Host name is required';
       }
       return undefined;
@@ -136,25 +128,26 @@ async function promptForHostConfig(existing?: SSHHost): Promise<SSHHost | undefi
   }
 
   // Step 2: Hostname
-  const hostname = await vscode.window.showInputBox({
+  const hostnameInput = await vscode.window.showInputBox({
     prompt: 'Enter hostname or IP address',
     placeHolder: '192.168.1.100 or example.com',
     value: existing?.config.host,
     ignoreFocusOut: true,
     validateInput: (value) => {
-      if (!value) {
+      if (!value.trim()) {
         return 'Hostname is required';
       }
-      if (!isValidHostname(value)) {
+      if (!isValidHostname(value.trim())) {
         return 'Invalid hostname or IP address';
       }
       return undefined;
     }
   });
 
-  if (!hostname) {
+  if (!hostnameInput) {
     return undefined;
   }
+  const hostname = hostnameInput.trim();
 
   // Step 3: Username (optional, defaults to current OS user)
   const username = await vscode.window.showInputBox({
@@ -164,8 +157,12 @@ async function promptForHostConfig(existing?: SSHHost): Promise<SSHHost | undefi
     ignoreFocusOut: true
   });
 
+  if (username === undefined) {
+    return undefined;
+  }
+
   // Use current OS username if not provided
-  const finalUsername = username || process.env.USER || process.env.USERNAME || 'root';
+  const finalUsername = username.trim() || process.env.USER || process.env.USERNAME || 'root';
 
   // Step 4: Port
   const portInput = await vscode.window.showInputBox({
@@ -185,7 +182,7 @@ async function promptForHostConfig(existing?: SSHHost): Promise<SSHHost | undefi
     return undefined;
   }
 
-  const port = parseInt(portInput);
+  const port = parseInt(portInput, 10);
 
   // Step 5: Auth method
   const authMethodPick = await vscode.window.showQuickPick(
@@ -214,8 +211,8 @@ async function promptForHostConfig(existing?: SSHHost): Promise<SSHHost | undefi
       canSelectMany: false,
       openLabel: 'Select SSH Private Key',
       filters: {
-        'SSH Keys': ['pem', 'key', 'ppk'],
-        'All Files': ['*']
+        sshKeys: ['pem', 'key', 'ppk'],
+        allFiles: ['*']
       }
     });
 
@@ -230,7 +227,7 @@ async function promptForHostConfig(existing?: SSHHost): Promise<SSHHost | undefi
   if (existing) {
     return {
       ...existing,
-      label,
+      label: label.trim(),
       config: {
         ...existing.config,
         host: hostname,
@@ -245,7 +242,7 @@ async function promptForHostConfig(existing?: SSHHost): Promise<SSHHost | undefi
   } else {
     const host = createSSHHost(
       generateUUID(),
-      label,
+      label.trim(),
       hostname,
       finalUsername,
       null,

@@ -24,9 +24,13 @@ export interface TerminalInfo {
 /**
  * Manages all SSH terminal instances
  */
-export class TerminalManager {
+export class TerminalManager implements vscode.Disposable {
   private terminals: Map<string, TerminalInfo> = new Map();
   private terminalsByHost: Map<string, Set<string>> = new Map();
+
+  dispose(): void {
+    this.disposeAll();
+  }
 
   /**
    * Add a terminal to tracking
