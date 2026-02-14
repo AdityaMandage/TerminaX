@@ -6,6 +6,13 @@ Advanced SSH connection management for Visual Studio Code with enterprise-grade 
 
 TerminaX provides comprehensive SSH session management directly within VS Code, featuring hierarchical host organization, secure credential storage, multi-session terminals, and broadcast command execution across multiple hosts simultaneously.
 
+## Download
+
+Download the latest packaged extension (VSIX) from GitHub Releases:
+[terminax-1.0.0.vsix](https://github.com/AdityaMandage/TerminaX/releases/latest/download/terminax-1.0.0.vsix)
+
+To install, open VS Code, run the command palette `Extensions: Install from VSIX...`, and select the downloaded file.
+
 ## Features
 
 ### Core Functionality
