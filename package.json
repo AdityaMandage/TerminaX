@@ -8,12 +8,12 @@
   "license": "ISC",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/terminax"
+    "url": "https://github.com/AdityaMandage/TerminaX"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/terminax/issues"
+    "url": "https://github.com/AdityaMandage/TerminaX/issues"
   },
-  "homepage": "https://github.com/yourusername/terminax#readme",
+  "homepage": "https://github.com/AdityaMandage/TerminaX#readme",
   "engines": {
     "vscode": "^1.85.0"
   },
