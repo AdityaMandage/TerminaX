@@ -13,8 +13,13 @@ import { formatDuration } from '../utils/treeHelpers';
  */
 export interface SessionReader {
   getTerminalCount(hostId: string): number;
-  getSessionInfos(hostId: string): Array<{ terminalId: string; hostId: string; createdAt: Date }>;
-  focusHostTerminal(hostId: string): void;
+  getSessionInfos(hostId: string): Array<{
+    terminalId: string;
+    hostId: string;
+    createdAt: Date;
+    status: ConnectionStatus;
+    lastError?: string;
+  }>;
 }
 
 /**
@@ -79,12 +84,36 @@ export class SSHTreeDataProvider
     // Set icon and tooltip based on type
     if (element.type === TreeNodeType.HOST) {
       const host = element as SSHHost;
-      const state = this.connectionStateTracker.getState(element.id);
+      const trackedState = this.connectionStateTracker.getState(element.id);
+      const sessionInfos = this.sessionReader?.getSessionInfos(element.id) ?? [];
+      const connectedSessions = sessionInfos.filter(
+        (session) => session.status === ConnectionStatus.CONNECTED
+      );
+      const hasConnectedSessions = connectedSessions.length > 0;
+      const firstConnectedSessionStartedAt = hasConnectedSessions
+        ? new Date(Math.min(...connectedSessions.map((session) => session.createdAt.getTime())))
+        : undefined;
+      const latestSessionError = sessionInfos.find(
+        (session) => session.status === ConnectionStatus.ERROR && session.lastError
+      )?.lastError;
+      const effectiveState = hasConnectedSessions
+        ? {
+          status: ConnectionStatus.CONNECTED,
+          connectedAt: firstConnectedSessionStartedAt,
+          lastError: trackedState?.lastError
+        }
+        : trackedState?.status === ConnectionStatus.ERROR || latestSessionError
+          ? {
+            status: ConnectionStatus.ERROR,
+            connectedAt: trackedState?.connectedAt,
+            lastError: trackedState?.lastError || latestSessionError
+          }
+        : trackedState;
       const health = this.healthStateReader?.getHostHealth(element.id);
 
       // Status-based icon
-      item.iconPath = this.getHostIcon(state?.status, health);
-      item.tooltip = this.getHostTooltip(host, state, health);
+      item.iconPath = this.getHostIcon(effectiveState?.status, health);
+      item.tooltip = this.getHostTooltip(host, effectiveState, health);
 
       // Description shows username@host and session count
       const baseDesc = this.getHostDescription(host, health);
@@ -396,7 +425,7 @@ export class SSHTreeDataProvider
 
         if (health?.status === HostHealthStatus.UNHEALTHY) {
           return new vscode.ThemeIcon(
-            'warning',
+            'circle-filled',
             new vscode.ThemeColor('terminal.ansiYellow')
           );
         }
@@ -507,7 +536,7 @@ export class SSHTreeDataProvider
     item.command = {
       command: 'terminax.focusSession',
       title: 'Focus Terminal',
-      arguments: [session.hostId]
+      arguments: [session.hostId, session.terminalId]
     };
     return item;
   }

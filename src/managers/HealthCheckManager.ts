@@ -13,6 +13,7 @@ export class HealthCheckManager implements vscode.Disposable {
   private intervalHandle: NodeJS.Timeout | undefined;
   private runningCheckAll = false;
   private disposed = false;
+  private paused = true; // Start paused, resume when view becomes visible
 
   private readonly onDidUpdateHealthEmitter = new vscode.EventEmitter<string | undefined>();
   readonly onDidUpdateHealth = this.onDidUpdateHealthEmitter.event;
@@ -21,7 +22,21 @@ export class HealthCheckManager implements vscode.Disposable {
 
   start(): void {
     this.restartScheduler();
-    void this.checkAllNow();
+    // Don't check immediately - wait for view to become visible
+  }
+
+  pause(): void {
+    this.paused = true;
+  }
+
+  resume(): void {
+    const wasPaused = this.paused;
+    this.paused = false;
+
+    // Run check immediately when resuming
+    if (wasPaused && this.isHealthCheckEnabled()) {
+      void this.checkAllNow();
+    }
   }
 
   dispose(): void {
@@ -49,7 +64,10 @@ export class HealthCheckManager implements vscode.Disposable {
 
     const intervalMs = this.getIntervalMs();
     this.intervalHandle = setInterval(() => {
-      void this.checkAllNow();
+      // Only run check if not paused (view is visible)
+      if (!this.paused) {
+        void this.checkAllNow();
+      }
     }, intervalMs);
   }
 
@@ -71,7 +89,7 @@ export class HealthCheckManager implements vscode.Disposable {
   }
 
   async checkAllNow(): Promise<void> {
-    if (this.runningCheckAll || this.disposed || !this.isHealthCheckEnabled()) {
+    if (this.runningCheckAll || this.disposed || !this.isHealthCheckEnabled() || this.paused) {
       return;
     }
 

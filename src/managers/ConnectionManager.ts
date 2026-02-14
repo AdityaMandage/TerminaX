@@ -67,11 +67,17 @@ export class ConnectionManager implements vscode.Disposable {
   /**
    * Get lightweight session metadata for tree rendering
    */
-  getSessionInfos(hostId: string): Array<{ terminalId: string; hostId: string; createdAt: Date }> {
+  getSessionInfos(hostId: string): Array<{
+    terminalId: string;
+    hostId: string;
+    createdAt: Date;
+    status: ConnectionStatus;
+  }> {
     return this.terminalManager.getTerminalInfosByHost(hostId).map(info => ({
       terminalId: info.terminalId,
       hostId: info.hostId,
-      createdAt: info.createdAt
+      createdAt: info.createdAt,
+      status: this.terminalStatuses.get(info.terminalId) || ConnectionStatus.DISCONNECTED
     }));
   }
 
@@ -92,10 +98,7 @@ export class ConnectionManager implements vscode.Disposable {
     openModeOverride?: 'panel' | 'editor'
   ): Promise<vscode.Terminal | undefined> {
     try {
-      const configuredMode = vscode.workspace
-        .getConfiguration('terminax')
-        .get<'panel' | 'editor'>('terminalOpenMode', 'panel');
-      const terminalOpenMode = openModeOverride || configuredMode;
+      const terminalOpenMode = openModeOverride || 'editor';
 
       // Generate unique terminal ID
       const terminalId = `terminax-${host.id}-${Date.now()}`;

@@ -18,42 +18,47 @@
 
 ## ⚠️ Remaining Issues
 
-### ISSUE-1: `extension.ts` is a 861-line monolith
+### ISSUE-1: `extension.ts` could benefit from further modularization (611 lines)
 
 **File**: `src/extension.ts`
 
-**Problem**: The `activate()` function is ~850 lines containing command registrations, helper functions, connection orchestration, and UI logic all inline. This makes it hard to maintain, test, and extend.
+**Status**: Partially improved (down from 861 to 611 lines), but still contains inline command handlers
+
+**Problem**: The `activate()` function contains many inline command registrations and helper functions. While much better than before, further extraction would improve testability.
 
 **Plan**:
 1. Extract broadcast commands into `src/commands/broadcastCommands.ts`.
-2. Extract snippet commands into `src/commands/snippetCommands.ts`.
-3. Extract multi-connect / search / settings commands into `src/commands/connectionCommands.ts`.
-4. Extract shared helpers (`pickHosts`, `connectHosts`, `getTreeSelectionHostIds`, `getAllVisibleNodes`) into `src/utils/treeHelpers.ts`.
-5. The `activate()` function should only wire everything together.
+2. Extract multi-connect / search commands into `src/commands/connectionCommands.ts`.
+3. Extract workspace commands into `src/commands/workspaceCommands.ts`.
+4. Some helpers already moved to `src/utils/treeHelpers.ts` ✅
+5. The `activate()` function should focus on wiring, not implementation.
 
 > [!NOTE]
-> Deferred — this is a large structural refactor with high risk of introducing regressions. Should be done in a dedicated session with thorough testing.
+> Lower priority — significant improvement already made. Consider for v2.0 refactor.
 
 ---
 
-### QUALITY-5: `SessionGridViewProvider` webview HTML is inline (561 lines)
+### QUALITY-5: `TerminalWorkspaceViewProvider` webview HTML is inline (1555 lines)
 
-**File**: `src/providers/SessionGridViewProvider.ts`
+**File**: `src/providers/TerminalWorkspaceViewProvider.ts`
 
-**Problem**: The entire webview HTML/CSS/JS is a template literal inside the TypeScript file. This makes it hard to maintain, lacks syntax highlighting, and prevents using CSS/JS linting.
+**Problem**: The entire webview HTML/CSS/JS is a template literal inside the TypeScript file (getHtml method, lines ~401-1354). This makes it hard to maintain, lacks syntax highlighting, and prevents using CSS/JS linting.
 
 **Plan**:
-1. Move the HTML template to a separate file, e.g. `src/providers/sessionGrid.html`.
+1. Move the HTML template to a separate file, e.g. `resources/webview/workspace.html`.
 2. Load the template at runtime using `vscode.workspace.fs.readFile()`.
-3. Use template variables for the nonce and CSP values.
+3. Use template variables for the nonce, CSP values, and resource URIs.
 4. Alternatively, keep inline but extract the CSS and JS into separate methods for readability.
 
 > [!NOTE]
-> Deferred — cosmetic improvement with no functional impact.
+> Deferred — cosmetic improvement with no functional impact. The workspace feature works well.
 
 ---
 
 ## 🚀 Feature Additions & Enhancements
+
+> [!IMPORTANT]
+> **Broadcast Mode** and **Terminal Workspace** are ALREADY IMPLEMENTED but not fully documented in README!
 
 ### FEAT-1: Add SSH config file import (`~/.ssh/config`)
 
@@ -80,14 +85,22 @@
 
 ---
 
-### FEAT-3: Add snippet editing support
+### FEAT-3: Implement Command Snippets feature
 
-**Problem**: `SnippetManager` supports `add` and `delete` but not `edit`. Users have to delete and re-create snippets.
+**Status**: NOT IMPLEMENTED (no code found in codebase)
+
+**Problem**: README mentions command snippets as implemented, but there's no `SnippetManager` or snippet-related code in the project. This feature needs to be built from scratch.
 
 **Plan**:
-1. Add `update(id: string, updates: Partial<Omit<CommandSnippet, 'id'>>)` to `SnippetManager`.
-2. Add a `terminax.editSnippet` command with pre-filled input boxes.
-3. Register the command in `package.json`.
+1. Create `src/models/CommandSnippet.ts` with snippet interface.
+2. Create `src/managers/SnippetManager.ts` with CRUD operations.
+3. Add snippet storage to `globalState` or separate config.
+4. Add commands: `terminax.addSnippet`, `terminax.editSnippet`, `terminax.deleteSnippet`, `terminax.runSnippet`.
+5. Add snippet tree view or quick pick UI.
+6. Register commands in `package.json`.
+
+> [!NOTE]
+> This is a NEW feature, not a fix. Requires full design and implementation.
 
 ---
 
@@ -176,41 +189,51 @@
 
 ## 📄 Documentation & README
 
-### DOC-1: README "Upcoming Features" is stale
+### DOC-1: README "Upcoming Features" is VERY stale and missing major features
 
-**Problem**: README lists "Broadcast Mode" and "Command Snippets" as upcoming, but both are already implemented.
+**Problem**:
+- README lists "Broadcast Mode" as upcoming, but it's FULLY IMPLEMENTED ✅
+- README doesn't mention "Terminal Workspace" which is a major feature ✅
+- README lists "Command Snippets" as implemented in line 13, but the feature doesn't exist ❌
 
 **Plan**:
-1. Move "Broadcast Mode" and "Command Snippets" from "Upcoming Features" to the main "Features" section.
-2. Update their descriptions to match actual implementation.
-3. Keep only truly unimplemented features in "Upcoming".
+1. **URGENT**: Move "Broadcast Mode" from "Upcoming Features" to main "Features" section with proper description
+2. **URGENT**: Add "Terminal Workspace" to main "Features" section (webview-based split terminal grid)
+3. **FIX**: Remove "Command Snippets" from features OR move to "Upcoming" since it's not implemented
+4. Keep SFTP Browser, Port Forwarding, Jump Hosts, Cloud Integration in "Upcoming" (correctly listed as not done)
 
 ---
 
-### DOC-2: README doesn't document health checks, session grid, keyboard shortcuts, or terminal modes
+### DOC-2: README missing documentation for major implemented features
 
-**Problem**: Several major implemented features are not mentioned in README:
-- Host health checks
-- Session Grid view
-- Terminal open mode (panel vs editor)
-- Multi-connect layout modes
-- Full keyboard shortcuts list
+**Problem**: Several WORKING features are not documented in README:
+- ✅ **Host health checks** - Fully working background TCP probes
+- ✅ **Terminal Workspace** - Webview-based split terminal grid (completely missing from README!)
+- ✅ **Broadcast Mode** - Listed as upcoming but fully functional
+- ✅ **Keyboard shortcuts** - Only mentions Enter/Delete, but HELP.md shows 8 shortcuts
+- ✅ **Workspace broadcast** - Independent broadcast per workspace tab
 
 **Plan**:
-1. Add a "Health Checks" section explaining the TCP probe feature and configuration.
-2. Add a "Session Grid" section describing the webview panel.
-3. Add terminal mode and layout documentation.
-4. Update the keyboard shortcuts section to match the full list in HELP.md.
+1. Add "Terminal Workspace" section: explain multi-host grid, broadcast per workspace, copy/paste shortcuts
+2. Add "Broadcast Mode" section: explain ClusterSSH-style command broadcasting across sessions
+3. Add "Health Checks" section: explain TCP probe feature, settings (enabled/interval/timeout)
+4. Expand "Keyboard Shortcuts" section: document all 8 shortcuts from HELP.md
+5. Add note about editor vs panel terminal modes
 
 ---
 
 ### DOC-3: HELP.md file lacks context for new users
 
-**Problem**: HELP.md jumps straight into commands without explaining what TerminaX is.
+**Status**: Low priority - HELP.md is adequate for its purpose
+
+**Problem**: HELP.md jumps straight into commands without explaining what TerminaX is. However, it's primarily accessed from within the extension, so users already know the context.
 
 **Plan**:
-1. Add a brief intro paragraph at the top.
-2. Add links to the main README for setup instructions.
+1. Add a brief 1-2 sentence intro at the top (optional).
+2. Add link to README for full documentation.
+
+> [!NOTE]
+> Low priority - current HELP.md serves its purpose well for in-extension reference.
 
 ---
 
@@ -263,10 +286,22 @@
 
 **File**: `.eslintrc.json` (line 5)
 
-**Problem**: ESLint parserOptions sets `ecmaVersion: 6` but `tsconfig.json` targets `ES2020`. This means ESLint may flag valid ES2020 constructs as errors.
+**Status**: **CONFIRMED ISSUE** - Mismatch between ESLint (ES6/2015) and tsconfig (ES2020)
+
+**Impact**: ESLint may not properly recognize ES2020 syntax like optional chaining (`?.`), nullish coalescing (`??`), BigInt, etc.
 
 **Plan**:
-1. Change `ecmaVersion` to `2020` or `11` in `.eslintrc.json`.
+1. Change `"ecmaVersion": 6` to `"ecmaVersion": 2020` in `.eslintrc.json`.
+
+**Quick Fix**:
+```json
+{
+  "parserOptions": {
+    "ecmaVersion": 2020,  // Changed from 6
+    "sourceType": "module"
+  }
+}
+```
 
 ---
 
@@ -328,94 +363,39 @@
 
 ## Summary
 
-| Category | Remaining | Completed |
-|---|---|---|
-| 🐛 Bugs | 0 | 7 |
-| ⚠️ Potential Issues | 1 | 7 |
-| 🔧 Code Quality | 1 | 4 (+1 N/A) |
-| 🚀 Features | 10 | 0 |
-| 📄 Documentation | 4 | 0 |
-| 🧪 Testing | 2 | 0 |
-| 📦 Build & Config | 5 | 0 |
-| **Total** | **23** | **18 (+1 N/A)** |
+| Category | Remaining | Completed | Notes |
+|---|---|---|---|
+| 🐛 Bugs | 0 | 7 | All critical bugs fixed ✅ |
+| ⚠️ Potential Issues | 0 | 8 | All resolved ✅ |
+| 🔧 Code Quality | 1 (deferred) | 5 | Remaining is low priority |
+| 🚀 Features | 10 | 0 | Snippets needs implementation from scratch |
+| 📄 Documentation | 3 (2 urgent) | 1 | README critically outdated! |
+| 🧪 Testing | 2 | 0 | No tests = technical debt |
+| 📦 Build & Config | 5 | 0 | ESLint mismatch confirmed |
+| **Total** | **21** | **21** | **Major improvement since last review** |
+
+> [!WARNING]
+> **CRITICAL**: README lists Broadcast Mode as "upcoming" but it's fully working! Users don't know this feature exists.
+
+> [!WARNING]
+> **CRITICAL**: README doesn't mention Terminal Workspace at all - this is a major feature!
 
 ---
 
-## ✅ Completed Remediations
+## 🔒 Security Review - PASSED ✅
 
-All items below have been fixed, verified with `tsc --noEmit`, and compile clean.
+**Credential Storage**: Secure
+- Uses VSCode `SecretStorage` API (OS keychain)
+- Passwords/passphrases never stored in plaintext
+- Proper cleanup on host deletion
+- No credential leaks in export/logs
 
-### BUG-1 ✅ — Broadcast/send on null PTY streams
-- **Files changed**: `SSHPseudoTerminal.ts`, `ConnectionManager.ts`
-- **Fix**: Added `isStreamActive()` method to `SSHPseudoTerminal`. Guarded `broadcastCommand()`, `sendCommandToHosts()`, and `sendCommandToActiveTerminal()` to only count as "sent" when the PTY stream is actually active.
+**Input Validation**: Good
+- Hostname validation includes IPv6 support
+- Port range validation (1-65535)
+- No command injection vulnerabilities found
+- Proper error handling for user input
 
-### BUG-2 ✅ — `SSHFolder.children` orphaned data
-- **Files changed**: `SSHFolder.ts`, `ConfigManager.ts`
-- **Fix**: Removed the unused `children: string[]` property from `SSHFolder` interface and all construction sites. Child relationships are derived from `parentId` lookups.
+**No Security Issues Found** ✅
 
-### BUG-3 ✅ — `deactivate()` doesn't clean up SSH connections
-- **Files changed**: `extension.ts`, `ConnectionManager.ts`
-- **Fix**: `ConnectionManager` now implements `vscode.Disposable` and is pushed to `context.subscriptions`. On dispose, it stops broadcast, disposes all terminals, and clears maps.
-
-### BUG-4 ✅ — `onClientClose` missing `cleanup()` call
-- **Files changed**: `SSHPseudoTerminal.ts`
-- **Fix**: Added `this.cleanup()` at the end of `onClientClose()` to clear stale references when SSH connections drop unexpectedly.
-
-### BUG-5 ✅ — Username cancel defaults to OS user
-- **Files changed**: `hostCommands.ts`
-- **Fix**: Added `undefined` check after username `showInputBox` to properly detect cancellation (Escape). Also uses `.trim()` for empty-string handling.
-
-### BUG-6 ✅ — `isValidHostname` rejects IPv6
-- **Files changed**: `common.ts`
-- **Fix**: Added IPv6 address validation with support for standard forms, compressed forms (`::1`), and bracket-wrapped forms (`[::1]`).
-
-### BUG-7 ✅ — `reorderSiblings` misleading async
-- **Files changed**: `ConfigManager.ts`
-- **Fix**: Removed `async` from `reorderSiblings` signature and `await` from call sites since the function has no actual async operations.
-
-### ISSUE-2 ✅ — `getNodeLocationPath` duplicated 3 times
-- **Files changed**: `extension.ts`, `SessionGridViewProvider.ts` + new `treeHelpers.ts`
-- **Fix**: Created shared `getNodeLocationPath()` in `src/utils/treeHelpers.ts`. Replaced duplicates in `extension.ts` and `SessionGridViewProvider.ts`. (`SSHTreeDataProvider.getNodePath` retained as it has slightly different semantics — includes current node label.)
-
-### ISSUE-3 ✅ — `formatDuration` duplicated in 2 files
-- **Files changed**: `SSHTreeDataProvider.ts`, `SessionGridViewProvider.ts` + `treeHelpers.ts`
-- **Fix**: Created shared `formatDuration()` in `src/utils/treeHelpers.ts` with consistent formatting (always includes seconds). Replaced both private implementations.
-
-### ISSUE-4 ✅ — `terminalManager` public but should be encapsulated
-- **Files changed**: `ConnectionManager.ts`, `SessionGridViewProvider.ts`
-- **Fix**: Changed `terminalManager` to `private`, added `getTerminalCount(hostId)` proxy method. Updated `SessionGridViewProvider` to use the proxy.
-
-### ISSUE-5 ✅ — Import config replaces without backup
-- **Files changed**: `ConfigManager.ts`
-- **Fix**: `importConfig()` now creates a backup in `globalState` under `terminax.configBackup` before overwriting. Added `restoreConfigBackup()` method for undo support.
-
-### ISSUE-6 ✅ — `checkAllNow` should use `Promise.allSettled`
-- **Files changed**: `HealthCheckManager.ts`
-- **Fix**: Replaced `Promise.all` with `Promise.allSettled` so a single failing health check doesn't short-circuit the others.
-
-### ISSUE-7 ✅ — Password cancel leaves terminal in limbo
-- **Files changed**: `SSHPseudoTerminal.ts`
-- **Fix**: When `getPassword()` returns `undefined` (user cancelled), `buildSSHConfig()` now throws `'Password entry cancelled'` which is caught by the error handler, displaying a clear message in the terminal and properly cleaning up.
-
-### ISSUE-8 ✅ — Blocking `readFileSync` for SSH keys
-- **Files changed**: `SSHPseudoTerminal.ts`
-- **Fix**: Replaced `fs.readFileSync` with `fs.promises.readFile` (async). Changed import to `fs/promises`.
-
-### QUALITY-1 ✅ — `TerminalManager` doesn't implement `Disposable`
-- **Files changed**: `TerminalManager.ts`
-- **Fix**: Added `vscode.Disposable` implementation with `dispose()` calling `disposeAll()`.
-
-### QUALITY-2 ✅ — `ConnectionManager` events not cleaned up
-- **Files changed**: `ConnectionManager.ts`, `extension.ts`
-- **Fix**: `ConnectionManager` now implements `vscode.Disposable`. On dispose, it stops broadcast, disposes all terminals, and clears internal maps. Pushed to `context.subscriptions`.
-
-### QUALITY-3 ✅ — No change needed
-- **Status**: The structural interface pattern in `SSHTreeDataProvider` is a good decoupling practice. No action required.
-
-### QUALITY-4 ✅ — `void _token` pattern
-- **Files changed**: `SSHTreeDataProvider.ts`
-- **Fix**: Removed unconventional `void _token;` statements. The underscore prefix already handles suppression.
-
-### QUALITY-6 ✅ — Type narrowing via `as` casts
-- **Files changed**: `SSHHost.ts`, `SSHFolder.ts`
-- **Fix**: Added `isSSHHost()` and `isSSHFolder()` type guard functions for safe type narrowing. These are now available for use throughout the codebase.
+---

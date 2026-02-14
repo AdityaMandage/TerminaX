@@ -1,30 +1,36 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 
-interface HelpNode {
+interface DocumentationNode {
   id: string;
   label: string;
-  description: string;
   commandId: string;
+  icon: string;
 }
 
-export class HelpTreeDataProvider implements vscode.TreeDataProvider<HelpNode> {
-  private readonly nodes: HelpNode[] = [
+export class HelpTreeDataProvider implements vscode.TreeDataProvider<DocumentationNode> {
+  private readonly nodes: DocumentationNode[] = [
     {
       id: 'open-help',
-      label: 'Open TerminaX Help',
-      description: 'Shortcuts, search, and connection tips',
-      commandId: 'terminax.openHelp'
+      label: 'Help Documentation',
+      commandId: 'terminax.openHelp',
+      icon: 'question'
+    },
+    {
+      id: 'open-readme',
+      label: 'README',
+      commandId: 'terminax.openReadme',
+      icon: 'book'
     }
   ];
 
-  getTreeItem(element: HelpNode): vscode.TreeItem {
+  getTreeItem(element: DocumentationNode): vscode.TreeItem {
     const item = new vscode.TreeItem(
       element.label,
       vscode.TreeItemCollapsibleState.None
     );
 
-    item.description = element.description;
-    item.iconPath = new vscode.ThemeIcon('question');
+    item.iconPath = new vscode.ThemeIcon(element.icon);
     item.command = {
       command: element.commandId,
       title: element.label
@@ -33,7 +39,7 @@ export class HelpTreeDataProvider implements vscode.TreeDataProvider<HelpNode> {
     return item;
   }
 
-  getChildren(): vscode.ProviderResult<HelpNode[]> {
+  getChildren(): vscode.ProviderResult<DocumentationNode[]> {
     return this.nodes;
   }
 }

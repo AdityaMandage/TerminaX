@@ -89,11 +89,6 @@ export function registerHostCommands(
     await connectionManager.connect(host);
   });
 
-  // Connect in split terminal
-  registerSafeCommand(context, 'terminax.connectSplit', async (host: SSHHost) => {
-    await connectionManager.connect(host, true);
-  });
-
   // Disconnect from host
   registerSafeCommand(context, 'terminax.disconnect', async (host: SSHHost) => {
     connectionManager.disconnect(host.id);

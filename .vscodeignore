@@ -1,0 +1,41 @@
+# Source files (compiled to out/)
+src/**
+*.ts
+!out/**/*.d.ts
+
+# Build configuration
+tsconfig.json
+.eslintrc.json
+.eslintignore
+
+# Git
+.git/**
+.gitignore
+.gitattributes
+
+# IDE
+.vscode/**
+.vscode-test/**
+
+# Documentation (keep only what's needed)
+TODO.md
+.claude/**
+
+# Node modules - exclude dev dependencies
+node_modules/@types/**
+node_modules/@typescript-eslint/**
+node_modules/@vscode/test-electron/**
+node_modules/eslint/**
+node_modules/typescript/**
+
+# Test files
+**/test/**
+**/*.test.ts
+**/*.test.js
+
+# Misc
+*.vsix
+.DS_Store
+*.log
+npm-debug.log*
+.npmrc

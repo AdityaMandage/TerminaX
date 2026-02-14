@@ -2,14 +2,17 @@ import * as vscode from 'vscode';
 import { ConfigManager } from './managers/ConfigManager';
 import { ConnectionManager } from './managers/ConnectionManager';
 import { CredentialService } from './services/CredentialService';
-import { SSHTreeDataProvider } from './providers/SSHTreeDataProvider';
+import { SessionReader, SSHTreeDataProvider } from './providers/SSHTreeDataProvider';
 import { HelpTreeDataProvider } from './providers/HelpTreeDataProvider';
 import { registerHostCommands } from './commands/hostCommands';
 import { registerFolderCommands } from './commands/folderCommands';
 import { HealthCheckManager } from './managers/HealthCheckManager';
+import { WorkspaceSessionManager } from './managers/WorkspaceSessionManager';
+import { ConnectionStatus } from './models/ConnectionState';
 import { SSHFolder } from './models/SSHFolder';
 import { SSHHost } from './models/SSHHost';
 import { TreeNode, TreeNodeType } from './models/TreeNode';
+import { TerminalWorkspacePanel } from './providers/TerminalWorkspaceViewProvider';
 import { getNodeLocationPath } from './utils/treeHelpers';
 import { registerSafeCommand, runSafely } from './utils/commandHelpers';
 
@@ -23,7 +26,9 @@ export function activate(context: vscode.ExtensionContext) {
   const configManager = new ConfigManager(context);
   const credentialService = new CredentialService(context.secrets);
   const healthCheckManager = new HealthCheckManager(configManager);
+  const workspaceSessionManager = new WorkspaceSessionManager(credentialService);
   context.subscriptions.push(healthCheckManager);
+  context.subscriptions.push(workspaceSessionManager);
   healthCheckManager.start();
 
   // Initialize connection manager (needs to be created before tree provider)
@@ -33,12 +38,44 @@ export function activate(context: vscode.ExtensionContext) {
   );
   context.subscriptions.push(connectionManager);
 
+  const terminalWorkspaceProvider = new TerminalWorkspacePanel(
+    context.extensionUri,
+    configManager,
+    workspaceSessionManager
+  );
+  context.subscriptions.push(terminalWorkspaceProvider);
+
+  const sessionReader: SessionReader = {
+    getTerminalCount(hostId: string): number {
+      return connectionManager.getTerminalCount(hostId) + workspaceSessionManager.getSessionCount(hostId);
+    },
+    getSessionInfos(hostId: string): Array<{
+      terminalId: string;
+      hostId: string;
+      createdAt: Date;
+      status: ConnectionStatus;
+      lastError?: string;
+    }> {
+      const trackedTerminalSessions = connectionManager.getSessionInfos(hostId);
+      const workspaceSessions = workspaceSessionManager.getSessionInfos(hostId).map((session) => ({
+        terminalId: `workspace:${session.sessionId}`,
+        hostId: session.hostId,
+        createdAt: session.createdAt,
+        status: session.status,
+        lastError: session.lastError
+      }));
+
+      return [...trackedTerminalSessions, ...workspaceSessions]
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    }
+  };
+
   // Initialize tree data provider
   const treeDataProvider = new SSHTreeDataProvider(
     configManager,
     connectionManager.getStateTracker(),
     healthCheckManager,
-    connectionManager
+    sessionReader
   );
 
   // Set tree provider in connection manager
@@ -60,6 +97,40 @@ export function activate(context: vscode.ExtensionContext) {
     showCollapseAll: false
   });
   context.subscriptions.push(helpView);
+
+  // Pause/resume health checks based on view visibility
+  context.subscriptions.push(
+    treeView.onDidChangeVisibility((event) => {
+      if (event.visible) {
+        healthCheckManager.resume();
+      } else {
+        healthCheckManager.pause();
+      }
+    })
+  );
+
+  // Resume health checks if view is initially visible
+  if (treeView.visible) {
+    healthCheckManager.resume();
+  }
+
+  context.subscriptions.push(
+    workspaceSessionManager.onDidSessionEvent((event) => {
+      if (event.type === 'added' || event.type === 'updated') {
+        const node = configManager.getNode(event.session.hostId);
+        treeDataProvider.refresh(node);
+        return;
+      }
+
+      if (event.type === 'removed') {
+        const node = configManager.getNode(event.hostId);
+        treeDataProvider.refresh(node);
+        return;
+      }
+
+      // No tree refresh needed for plain output chunks.
+    })
+  );
 
   context.subscriptions.push(
     healthCheckManager.onDidUpdateHealth((hostId) => {
@@ -100,13 +171,28 @@ export function activate(context: vscode.ExtensionContext) {
     });
   };
 
-  // Focus a terminal for a host (used by session sub-tree click)
-  registerSafeCommand(context, 'terminax.focusSession', async (hostId: string) => {
+  // Focus a terminal for a host/session (used by session sub-tree click)
+  registerSafeCommand(context, 'terminax.focusSession', async (hostId: string, terminalId?: string) => {
     if (!hostId) {
       return;
     }
 
-    connectionManager.focusHostTerminal(hostId);
+    if (terminalId) {
+      if (terminalId.startsWith('workspace:')) {
+        const workspaceSessionId = terminalId.slice('workspace:'.length);
+        await terminalWorkspaceProvider.focusHostSession(hostId, workspaceSessionId);
+        return;
+      }
+
+      connectionManager.focusTerminalById(terminalId);
+      return;
+    }
+
+    if (connectionManager.focusHostTerminal(hostId)) {
+      return;
+    }
+
+    await terminalWorkspaceProvider.focusHostSession(hostId);
   });
 
   registerHostCommands(
@@ -160,14 +246,14 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
-    const extensionConfig = vscode.workspace.getConfiguration('terminax');
-    // Multi-connect (2+ hosts) always uses panel mode for split support
-    const terminalOpenMode = hosts.length > 1
-      ? 'panel'
-      : extensionConfig.get<'panel' | 'editor'>('terminalOpenMode', 'panel');
-    const multiConnectLayout = hosts.length > 1
-      ? 'balanced'
-      : extensionConfig.get<'balanced' | 'single-parent' | 'tabs'>('multiConnectLayout', 'balanced');
+    if (hosts.length > 1) {
+      await terminalWorkspaceProvider.connectHosts(hosts);
+      vscode.window.setStatusBarMessage(
+        `TerminaX: opened ${hosts.length} workspace session(s)`,
+        1300
+      );
+      return;
+    }
 
     await vscode.window.withProgress(
       {
@@ -176,64 +262,21 @@ export function activate(context: vscode.ExtensionContext) {
         cancellable: false
       },
       async (progress) => {
-        let firstTerminal: vscode.Terminal | undefined;
-        const balancedQueue: vscode.Terminal[] = [];
-
         for (let i = 0; i < hosts.length; i++) {
           const host = hosts[i];
           progress.report({
             message: `Connecting ${host.label} (${i + 1}/${hosts.length})`
           });
 
-          let splitTerminal = false;
-          let splitParentTerminal: vscode.Terminal | undefined;
-
-          const canSplitInPanel = terminalOpenMode === 'panel' && i > 0;
-          if (canSplitInPanel) {
-            if (multiConnectLayout === 'single-parent') {
-              splitParentTerminal = firstTerminal;
-              splitTerminal = splitParentTerminal !== undefined;
-            } else if (multiConnectLayout === 'balanced') {
-              splitParentTerminal = balancedQueue.shift() || firstTerminal;
-              splitTerminal = splitParentTerminal !== undefined;
-            }
-          }
-
-          const createdTerminal = await connectionManager.connect(
+          await connectionManager.connect(
             host,
-            splitTerminal,
-            splitParentTerminal,
-            terminalOpenMode
+            false,
+            undefined,
+            'editor'
           );
-
-          if (i === 0 && createdTerminal) {
-            firstTerminal = createdTerminal;
-            balancedQueue.push(createdTerminal);
-          }
-
-          if (
-            createdTerminal &&
-            splitTerminal &&
-            terminalOpenMode === 'panel' &&
-            multiConnectLayout === 'balanced'
-          ) {
-            if (splitParentTerminal) {
-              balancedQueue.push(splitParentTerminal);
-            }
-            balancedQueue.push(createdTerminal);
-          }
         }
       }
     );
-
-    if (terminalOpenMode === 'panel') {
-      const panelMaximized = await connectionManager.ensurePanelMaximized();
-      if (!panelMaximized) {
-        vscode.window.showWarningMessage(
-          'TerminaX could not force panel maximize in this VS Code build/layout. Use "View: Toggle Maximized Panel".'
-        );
-      }
-    }
 
     const action = await vscode.window.showInformationMessage(
       `Opened ${hosts.length} terminal session(s)`,
@@ -351,8 +394,15 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
-    const result = connectionManager.broadcastCommand(command);
-    if (result.sent === 0) {
+    const integratedResult = connectionManager.broadcastCommand(command);
+    const payload = command.endsWith('\r') ? command : `${command}\r`;
+    const workspaceSent = workspaceSessionManager.sendInputToHosts(
+      connectionManager.getBroadcastHostIds(),
+      payload
+    );
+    const totalSent = integratedResult.sent + workspaceSent;
+
+    if (totalSent === 0) {
       vscode.window.showWarningMessage(
         'No active terminals matched the current broadcast scope'
       );
@@ -360,7 +410,54 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     vscode.window.showInformationMessage(
-      `Broadcast command sent to ${result.sent} terminal(s)`
+      `Broadcast command sent to ${totalSent} terminal(s)`
+    );
+  });
+
+  registerSafeCommand(context, 'terminax.openWorkspace', async () => {
+    await terminalWorkspaceProvider.openWorkspace();
+  });
+
+  registerSafeCommand(context, 'terminax.workspaceAddHosts', async () => {
+    await terminalWorkspaceProvider.addHostsFromPicker();
+  });
+
+  registerSafeCommand(context, 'terminax.workspaceDisconnectAll', async () => {
+    terminalWorkspaceProvider.disconnectAll();
+  });
+
+  registerSafeCommand(context, 'terminax.workspaceEnableBroadcast', async () => {
+    if (!terminalWorkspaceProvider.hasActiveWorkspace()) {
+      vscode.window.showWarningMessage('No active workspace panel to enable broadcast');
+      return;
+    }
+
+    await terminalWorkspaceProvider.setBroadcastEnabled(true);
+    vscode.window.setStatusBarMessage('TerminaX: workspace broadcast enabled', 1300);
+  });
+
+  registerSafeCommand(context, 'terminax.workspaceDisableBroadcast', async () => {
+    if (!terminalWorkspaceProvider.hasActiveWorkspace()) {
+      vscode.window.showWarningMessage('No active workspace panel to disable broadcast');
+      return;
+    }
+
+    await terminalWorkspaceProvider.setBroadcastEnabled(false);
+    vscode.window.setStatusBarMessage('TerminaX: workspace broadcast disabled', 1300);
+  });
+
+  registerSafeCommand(context, 'terminax.workspaceToggleBroadcast', async () => {
+    if (!terminalWorkspaceProvider.hasActiveWorkspace()) {
+      vscode.window.showWarningMessage('No active workspace panel to toggle broadcast');
+      return;
+    }
+
+    const enabled = await terminalWorkspaceProvider.toggleBroadcast();
+    vscode.window.setStatusBarMessage(
+      enabled
+        ? 'TerminaX: workspace broadcast enabled'
+        : 'TerminaX: workspace broadcast disabled',
+      1300
     );
   });
 
@@ -449,84 +546,9 @@ export function activate(context: vscode.ExtensionContext) {
     await vscode.commands.executeCommand('markdown.showPreview', helpUri);
   });
 
-  registerSafeCommand(context, 'terminax.setTerminalOpenMode', async () => {
-    const currentMode = vscode.workspace
-      .getConfiguration('terminax')
-      .get<'panel' | 'editor'>('terminalOpenMode', 'panel');
-
-    const pick = await vscode.window.showQuickPick(
-      [
-        {
-          label: 'Panel (Fullscreen)',
-          value: 'panel' as const,
-          description: 'Integrated panel, maximized by TerminaX'
-        },
-        {
-          label: 'Editor Tabs',
-          value: 'editor' as const,
-          description: 'Open terminal sessions as top-style editor tabs'
-        }
-      ],
-      {
-        placeHolder: `Current mode: ${currentMode}`,
-        ignoreFocusOut: true
-      }
-    );
-
-    if (!pick || pick.value === currentMode) {
-      return;
-    }
-
-    await vscode.workspace
-      .getConfiguration('terminax')
-      .update('terminalOpenMode', pick.value, vscode.ConfigurationTarget.Global);
-
-    vscode.window.showInformationMessage(`TerminaX terminal mode set to: ${pick.label}`);
-  });
-
-  registerSafeCommand(context, 'terminax.setMultiConnectLayout', async () => {
-    const currentLayout = vscode.workspace
-      .getConfiguration('terminax')
-      .get<'balanced' | 'single-parent' | 'tabs'>(
-        'multiConnectLayout',
-        'balanced'
-      );
-
-    const pick = await vscode.window.showQuickPick(
-      [
-        {
-          label: 'Balanced Grid (Auto)',
-          value: 'balanced' as const,
-          description: 'Build a balanced split tree for multi-connect'
-        },
-        {
-          label: 'Single Parent Split',
-          value: 'single-parent' as const,
-          description: 'Split all sessions from the first terminal'
-        },
-        {
-          label: 'Panel Tabs',
-          value: 'tabs' as const,
-          description: 'Open as panel tabs without split panes'
-        }
-      ],
-      {
-        placeHolder: `Current layout: ${currentLayout}`,
-        ignoreFocusOut: true
-      }
-    );
-
-    if (!pick || pick.value === currentLayout) {
-      return;
-    }
-
-    await vscode.workspace
-      .getConfiguration('terminax')
-      .update('multiConnectLayout', pick.value, vscode.ConfigurationTarget.Global);
-
-    vscode.window.showInformationMessage(
-      `TerminaX multi-connect layout set to: ${pick.label}`
-    );
+  registerSafeCommand(context, 'terminax.openReadme', async () => {
+    const readmeUri = vscode.Uri.joinPath(context.extensionUri, 'README.md');
+    await vscode.commands.executeCommand('markdown.showPreview', readmeUri);
   });
 
   registerSafeCommand(context, 'terminax.refresh', async () => {
@@ -536,6 +558,13 @@ export function activate(context: vscode.ExtensionContext) {
 
   runSafely('setBroadcastContext', async () => {
     await vscode.commands.executeCommand('setContext', 'terminax.broadcastActive', false);
+  });
+  runSafely('setWorkspaceBroadcastContext', async () => {
+    await vscode.commands.executeCommand('setContext', 'terminax.workspaceBroadcastActive', false);
+  });
+
+  runSafely('openDefaultWorkspace', async () => {
+    await terminalWorkspaceProvider.reveal(true);
   });
 
   registerSafeCommand(context, 'terminax.exportConfig', async () => {

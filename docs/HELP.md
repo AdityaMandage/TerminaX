@@ -2,10 +2,11 @@
 
 ## Quick Actions
 - `Connect`: Use the inline connect icon on a host row.
-- `Connect Multiple Hosts`: Use the toolbar button or command palette while the TerminaX view is focused.
+- `Connect Multiple Hosts`: Opens selected hosts directly in the custom `Terminal Workspace` split grid.
 - `Start Broadcast`: Select target hosts, then send one command to all active terminals.
 - `Search Hosts Tree`: Opens a top-center search picker for hosts/folders (name, IP/hostname, username, port, folder path).
 - `Refresh`: Reloads tree state and triggers an immediate health probe for all configured hosts.
+- `Open Terminal Workspace`: Opens a new split terminal workspace as an editor tab.
 
 ## Multi-Select Connect
 - In the TerminaX tree, hold `Ctrl` (Windows/Linux) or `Cmd` (macOS) and select multiple hosts/folders.
@@ -21,22 +22,21 @@ Shortcuts are scoped to the TerminaX hosts view (`focusedView == terminax-hosts`
 - `Ctrl+Alt+Shift+N` / `Cmd+Alt+Shift+N`: Add Folder
 - `Ctrl+Alt+Shift+B` / `Cmd+Alt+Shift+B`: Start Broadcast
 - `Ctrl+Alt+Shift+X` / `Cmd+Alt+Shift+X`: Stop Broadcast
+- `Ctrl+Alt+Shift+T` / `Cmd+Alt+Shift+T`: Open Terminal Workspace
 - `Ctrl+Alt+Shift+/` / `Cmd+Alt+Shift+/`: Open Help
 
 ## Terminal Open Mode
-Set `terminax.terminalOpenMode`:
-- `panel`: opens in panel and maximizes panel for non-split connects.
-- `editor`: opens in editor area tabs.
+TerminaX opens direct single-host connects in editor tabs by default. Multi-connect opens in `Terminal Workspace`.
 
-Use command `TerminaX: Set Terminal Open Mode` to switch quickly.
+## Workspace Tabs
+- Each `Open Terminal Workspace` action creates a new workspace tab in the active editor group.
+- Workspace broadcast is isolated per workspace tab.
+- Workspace numbering reuses gaps (for example, if Workspace 2 is closed, the next new one becomes Workspace 2).
 
-## Auto Layouts (Multi-Connect)
-Set `terminax.multiConnectLayout`:
-- `balanced`: balanced split tree for grid-like panel layout.
-- `single-parent`: split all sessions from the first terminal.
-- `tabs`: open as panel tabs without split panes.
-
-Use command `TerminaX: Set Multi-Connect Layout` to change this quickly.
+## Copy/Paste in Workspace
+- `Ctrl+C` / `Cmd+C` copies selection when text is selected.
+- `Ctrl+Shift+V`, `Ctrl+V`, `Shift+Insert`, and context-menu paste are supported.
+- Multiline paste uses bracketed-paste wrapping to better preserve pasted blocks.
 
 ## Host Health Checks
 TerminaX runs backend TCP checks to each host/port and updates host indicators without printing anything in terminals.
