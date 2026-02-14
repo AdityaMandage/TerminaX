@@ -160,12 +160,6 @@
         "category": "TerminaX"
       },
       {
-        "command": "terminax.refreshHealthChecks",
-        "title": "Refresh Health Checks",
-        "icon": "$(pulse)",
-        "category": "TerminaX"
-      },
-      {
         "command": "terminax.exportConfig",
         "title": "Export Configuration",
         "category": "TerminaX"
@@ -218,11 +212,6 @@
           "command": "terminax.startBroadcast",
           "when": "view == terminax-hosts && !terminax.broadcastActive",
           "group": "navigation@7"
-        },
-        {
-          "command": "terminax.refreshHealthChecks",
-          "when": "view == terminax-hosts",
-          "group": "navigation@9"
         }
       ],
       "view/item/context": [
@@ -348,12 +337,6 @@
         "command": "terminax.openHelp",
         "key": "ctrl+alt+shift+/",
         "mac": "cmd+alt+shift+/",
-        "when": "focusedView == terminax-hosts"
-      },
-      {
-        "command": "terminax.refreshHealthChecks",
-        "key": "ctrl+alt+shift+k",
-        "mac": "cmd+alt+shift+k",
         "when": "focusedView == terminax-hosts"
       }
     ],

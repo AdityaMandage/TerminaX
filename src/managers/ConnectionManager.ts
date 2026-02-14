@@ -120,16 +120,34 @@ export class ConnectionManager implements vscode.Disposable {
             ? vscode.TerminalLocation.Editor
             : vscode.TerminalLocation.Panel
       };
+      let hasSplitParentLocation = false;
 
       // If split terminal, create it beside the active terminal
       if (
         splitTerminal &&
-        terminalOpenMode === 'panel' &&
-        (splitParentTerminal || vscode.window.activeTerminal)
+        terminalOpenMode === 'panel'
       ) {
-        terminalOptions.location = {
-          parentTerminal: splitParentTerminal || vscode.window.activeTerminal!
-        };
+        const parentTerminal = splitParentTerminal || vscode.window.activeTerminal;
+        if (parentTerminal) {
+          // Make the intended split parent active first for more reliable split placement.
+          parentTerminal.show(true);
+          await vscode.commands.executeCommand('workbench.action.terminal.focus');
+
+          terminalOptions.location = {
+            parentTerminal: vscode.window.activeTerminal || parentTerminal
+          };
+          hasSplitParentLocation = true;
+        }
+      }
+
+      if (splitTerminal && terminalOpenMode === 'panel' && !hasSplitParentLocation) {
+        const activeTerminal = vscode.window.activeTerminal;
+        if (activeTerminal) {
+          terminalOptions.location = {
+            parentTerminal: activeTerminal
+          };
+          hasSplitParentLocation = true;
+        }
       }
 
       const terminal = vscode.window.createTerminal(terminalOptions);

@@ -5,7 +5,7 @@
 - `Connect Multiple Hosts`: Use the toolbar button or command palette while the TerminaX view is focused.
 - `Start Broadcast`: Select target hosts, then send one command to all active terminals.
 - `Search Hosts Tree`: Opens a top-center search picker for hosts/folders (name, IP/hostname, username, port, folder path).
-- `Refresh Health Checks`: Trigger an immediate host health probe for all configured hosts.
+- `Refresh`: Reloads tree state and triggers an immediate health probe for all configured hosts.
 
 ## Multi-Select Connect
 - In the TerminaX tree, hold `Ctrl` (Windows/Linux) or `Cmd` (macOS) and select multiple hosts/folders.
@@ -21,7 +21,6 @@ Shortcuts are scoped to the TerminaX hosts view (`focusedView == terminax-hosts`
 - `Ctrl+Alt+Shift+N` / `Cmd+Alt+Shift+N`: Add Folder
 - `Ctrl+Alt+Shift+B` / `Cmd+Alt+Shift+B`: Start Broadcast
 - `Ctrl+Alt+Shift+X` / `Cmd+Alt+Shift+X`: Stop Broadcast
-- `Ctrl+Alt+Shift+K` / `Cmd+Alt+Shift+K`: Refresh Health Checks
 - `Ctrl+Alt+Shift+/` / `Cmd+Alt+Shift+/`: Open Help
 
 ## Terminal Open Mode
@@ -47,7 +46,7 @@ Settings:
 - `terminax.healthChecks.intervalMs`
 - `terminax.healthChecks.timeoutMs`
 
-Use `TerminaX: Refresh Health Checks` for an immediate refresh.
+Use `TerminaX: Refresh` for an immediate refresh.
 
 ## Connection Error Messages
 TerminaX shows specific messages for common failures:

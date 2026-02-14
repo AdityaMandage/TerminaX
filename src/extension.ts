@@ -529,11 +529,6 @@ export function activate(context: vscode.ExtensionContext) {
     );
   });
 
-  registerSafeCommand(context, 'terminax.refreshHealthChecks', async () => {
-    await healthCheckManager.checkAllNow();
-    vscode.window.showInformationMessage('Health checks refreshed');
-  });
-
   registerSafeCommand(context, 'terminax.refresh', async () => {
     treeDataProvider.refresh();
     await healthCheckManager.checkAllNow();
