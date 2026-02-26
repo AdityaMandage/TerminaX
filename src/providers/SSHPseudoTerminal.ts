@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Client, ClientChannel, ConnectConfig } from 'ssh2';
 import * as fs from 'fs/promises';
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
+import { StringDecoder } from 'string_decoder';
 import { SSHHost } from '../models/SSHHost';
 import { ConnectionMetadata, ConnectionStatus } from '../models/ConnectionState';
 import { CredentialService } from '../services/CredentialService';
@@ -27,6 +28,12 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
   private passwordOverride?: string;
   private hasEverConnected: boolean = false;
   private hasShownErrorNotification: boolean = false;
+  private streamStdoutDecoder: StringDecoder = new StringDecoder('utf8');
+  private streamStderrDecoder: StringDecoder = new StringDecoder('utf8');
+  private nativeStdoutDecoder: StringDecoder = new StringDecoder('utf8');
+  private nativeStderrDecoder: StringDecoder = new StringDecoder('utf8');
+  private openSshMarkedConnected: boolean = false;
+  private openSshConnectedTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private host: SSHHost,
@@ -95,6 +102,9 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
   private async connect(): Promise<void> {
     try {
       this.writeEmitter.fire(`\r\n🔌 Connecting to ${this.host.config.host}...\r\n`);
+      this.streamClosedGracefully = false;
+      this.openSshMarkedConnected = false;
+      this.resetDecoders();
 
       if (this.host.config.authMethod === 'openssh') {
         this.connectViaOpenSshConfig();
@@ -120,11 +130,40 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
   }
 
   private connectViaOpenSshConfig(): void {
+    const extensionConfig = vscode.workspace.getConfiguration('terminax');
+    const keepaliveIntervalMs =
+      this.host.config.keepaliveInterval ??
+      extensionConfig.get<number>('keepaliveInterval', 30000);
+    const keepaliveCountMax =
+      this.host.config.keepaliveCountMax ??
+      extensionConfig.get<number>('keepaliveCountMax', 3);
+    const keepaliveIntervalSeconds = Math.max(1, Math.round(keepaliveIntervalMs / 1000));
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      TERM: this.resolveTerminalType(process.env.TERM),
+      COLORTERM: process.env.COLORTERM || 'truecolor'
+    };
+    if (!env.LANG && process.platform !== 'win32') {
+      env.LANG = 'en_US.UTF-8';
+    }
+
+    const args = [
+      '-tt',
+      '-o',
+      'LogLevel=ERROR',
+      '-o',
+      `ServerAliveInterval=${keepaliveIntervalSeconds}`,
+      '-o',
+      `ServerAliveCountMax=${keepaliveCountMax}`,
+      this.host.config.host
+    ];
+
     const sshProcess = spawn(
       'ssh',
-      ['-tt', this.host.config.host],
+      args,
       {
-        env: process.env,
+        env,
         stdio: 'pipe'
       }
     );
@@ -132,24 +171,28 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
     this.nativeProcess = sshProcess;
 
     sshProcess.on('spawn', () => {
-      this.writeEmitter.fire('✅ Connected via OpenSSH config\r\n\r\n');
-      this.hasEverConnected = true;
-      this.updateStatus(ConnectionStatus.CONNECTED);
+      this.openSshConnectedTimer = setTimeout(() => {
+        this.markOpenSshConnected();
+      }, 600);
     });
 
     sshProcess.stdout.on('data', (data: Buffer) => {
-      this.writeEmitter.fire(data.toString());
+      this.markOpenSshConnected();
+      this.emitDecodedChunk(data, this.nativeStdoutDecoder);
     });
 
     sshProcess.stderr.on('data', (data: Buffer) => {
-      this.writeEmitter.fire(data.toString());
+      this.markOpenSshConnected();
+      this.emitDecodedChunk(data, this.nativeStderrDecoder);
     });
 
     sshProcess.on('error', (err: Error) => {
+      this.clearOpenSshConnectedTimer();
       this.handleError(err);
     });
 
     sshProcess.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+      this.clearOpenSshConnectedTimer();
       this.onOpenSshProcessClose(code, signal);
     });
   }
@@ -282,7 +325,7 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
 
         // Forward stream output to terminal
         stream.on('data', (data: Buffer) => {
-          this.writeEmitter.fire(data.toString());
+          this.emitDecodedChunk(data, this.streamStdoutDecoder);
         });
 
         stream.on('close', (code?: number) => {
@@ -290,7 +333,7 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
         });
 
         stream.stderr.on('data', (data: Buffer) => {
-          this.writeEmitter.fire(data.toString());
+          this.emitDecodedChunk(data, this.streamStderrDecoder);
         });
       }
     );
@@ -301,6 +344,7 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
    */
   private onStreamClose(code?: number): void {
     this.streamClosedGracefully = true;
+    this.flushStreamDecoders();
 
     // Exit code 0 or undefined means clean exit (user typed 'exit' or normal termination)
     if (code === 0 || code === undefined || code === null) {
@@ -350,6 +394,7 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
 
     this.streamClosedGracefully = true;
     this.nativeProcess = null;
+    this.flushNativeDecoders();
 
     if (code === 0) {
       this.writeEmitter.fire('\r\n\n✨ Connection closed\r\n');
@@ -452,6 +497,8 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
   }
 
   private teardownConnection(): void {
+    this.clearOpenSshConnectedTimer();
+
     if (this.stream) {
       this.stream.removeAllListeners();
       this.stream.stderr?.removeAllListeners();
@@ -486,6 +533,7 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
   private cleanupConnection(): void {
     this.teardownConnection();
     this.streamClosedGracefully = false;
+    this.openSshMarkedConnected = false;
   }
 
   /**
@@ -598,5 +646,63 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
     }
 
     return passphrase;
+  }
+
+  private markOpenSshConnected(): void {
+    if (this.openSshMarkedConnected || this.isCleanedUp) {
+      return;
+    }
+
+    this.openSshMarkedConnected = true;
+    this.hasEverConnected = true;
+    this.writeEmitter.fire('✅ Connected via OpenSSH config\r\n\r\n');
+    this.updateStatus(ConnectionStatus.CONNECTED);
+  }
+
+  private clearOpenSshConnectedTimer(): void {
+    if (!this.openSshConnectedTimer) {
+      return;
+    }
+    clearTimeout(this.openSshConnectedTimer);
+    this.openSshConnectedTimer = null;
+  }
+
+  private resolveTerminalType(term: string | undefined): string {
+    if (!term || term === 'dumb') {
+      return 'xterm-256color';
+    }
+
+    return term;
+  }
+
+  private resetDecoders(): void {
+    this.streamStdoutDecoder = new StringDecoder('utf8');
+    this.streamStderrDecoder = new StringDecoder('utf8');
+    this.nativeStdoutDecoder = new StringDecoder('utf8');
+    this.nativeStderrDecoder = new StringDecoder('utf8');
+  }
+
+  private emitDecodedChunk(data: Buffer, decoder: StringDecoder): void {
+    const chunk = decoder.write(data);
+    if (chunk.length > 0) {
+      this.writeEmitter.fire(chunk);
+    }
+  }
+
+  private flushStreamDecoders(): void {
+    this.flushDecoder(this.streamStdoutDecoder);
+    this.flushDecoder(this.streamStderrDecoder);
+  }
+
+  private flushNativeDecoders(): void {
+    this.flushDecoder(this.nativeStdoutDecoder);
+    this.flushDecoder(this.nativeStderrDecoder);
+  }
+
+  private flushDecoder(decoder: StringDecoder): void {
+    const chunk = decoder.end();
+    if (chunk.length > 0) {
+      this.writeEmitter.fire(chunk);
+    }
   }
 }
