@@ -15,6 +15,7 @@ import { TreeNode, TreeNodeType } from './models/TreeNode';
 import { TerminalWorkspacePanel } from './providers/TerminalWorkspaceViewProvider';
 import { getNodeLocationPath } from './utils/treeHelpers';
 import { registerSafeCommand, runSafely } from './utils/commandHelpers';
+import { formatHostConnectionTarget } from './utils/hostDisplay';
 
 /**
  * Extension activation
@@ -91,6 +92,34 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(treeView);
 
+  const setFolderExpandedState = (folderId: string, expanded: boolean): void => {
+    const folder = configManager.getFolder(folderId);
+    if (!folder || folder.expanded === expanded) {
+      return;
+    }
+
+    runSafely(`setFolderExpandedState:${folderId}`, async () => {
+      await configManager.updateNode(folderId, { expanded });
+      await healthCheckManager.checkAllNow();
+    });
+  };
+
+  context.subscriptions.push(
+    treeView.onDidExpandElement((event) => {
+      if (event.element.type === TreeNodeType.FOLDER) {
+        setFolderExpandedState(event.element.id, true);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    treeView.onDidCollapseElement((event) => {
+      if (event.element.type === TreeNodeType.FOLDER) {
+        setFolderExpandedState(event.element.id, false);
+      }
+    })
+  );
+
   const helpTreeProvider = new HelpTreeDataProvider();
   const helpView = vscode.window.createTreeView('terminax-help', {
     treeDataProvider: helpTreeProvider,
@@ -117,14 +146,12 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     workspaceSessionManager.onDidSessionEvent((event) => {
       if (event.type === 'added' || event.type === 'updated') {
-        const node = configManager.getNode(event.session.hostId);
-        treeDataProvider.refresh(node);
+        treeDataProvider.refresh();
         return;
       }
 
       if (event.type === 'removed') {
-        const node = configManager.getNode(event.hostId);
-        treeDataProvider.refresh(node);
+        treeDataProvider.refresh();
         return;
       }
 
@@ -325,7 +352,7 @@ export function activate(context: vscode.ExtensionContext) {
     const picks = await vscode.window.showQuickPick(
       allHosts.map((host) => ({
         label: host.label,
-        description: `${host.config.username}@${host.config.host}:${host.config.port}`,
+        description: formatHostConnectionTarget(host),
         detail: getNodeLocation(host),
         picked: preselectedHostIds.has(host.id),
         host
@@ -508,7 +535,7 @@ export function activate(context: vscode.ExtensionContext) {
           const host = node as SSHHost;
           return {
             label: host.label,
-            description: `${host.config.username}@${host.config.host}:${host.config.port}`,
+            description: formatHostConnectionTarget(host),
             detail: getNodeLocation(host),
             node
           };

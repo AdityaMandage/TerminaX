@@ -85,6 +85,13 @@ export class HealthCheckManager implements vscode.Disposable {
       return;
     }
 
+    if (host.config.authMethod === 'openssh') {
+      if (this.states.delete(host.id)) {
+        this.onDidUpdateHealthEmitter.fire(host.id);
+      }
+      return;
+    }
+
     await this.checkHost(host);
   }
 
@@ -95,8 +102,9 @@ export class HealthCheckManager implements vscode.Disposable {
 
     this.runningCheckAll = true;
     try {
-      const hosts = this.configManager.getAllVisibleHosts();
-      const activeIds = new Set(hosts.map(host => host.id));
+      const hosts = this.configManager.getHostsForHealthChecks();
+      const hostsForProbe = hosts.filter((host) => host.config.authMethod !== 'openssh');
+      const activeIds = new Set(hostsForProbe.map(host => host.id));
 
       // Remove stale entries for hosts that no longer exist.
       for (const hostId of this.states.keys()) {
@@ -105,7 +113,7 @@ export class HealthCheckManager implements vscode.Disposable {
         }
       }
 
-      await Promise.allSettled(hosts.map(host => this.checkHost(host)));
+      await Promise.allSettled(hostsForProbe.map(host => this.checkHost(host)));
       this.onDidUpdateHealthEmitter.fire(undefined);
     } finally {
       this.runningCheckAll = false;

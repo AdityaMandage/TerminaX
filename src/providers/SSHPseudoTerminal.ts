@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { Client, ClientChannel, ConnectConfig } from 'ssh2';
 import * as fs from 'fs/promises';
+import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import { SSHHost } from '../models/SSHHost';
 import { ConnectionMetadata, ConnectionStatus } from '../models/ConnectionState';
 import { CredentialService } from '../services/CredentialService';
@@ -17,6 +18,7 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
 
   private client: Client | null = null;
   private stream: ClientChannel | null = null;
+  private nativeProcess: ChildProcessWithoutNullStreams | null = null;
   private dimensions: vscode.TerminalDimensions | undefined;
   private statusCallback?: (status: ConnectionStatus, metadata?: ConnectionMetadata) => void;
   private streamClosedGracefully: boolean = false;
@@ -56,6 +58,11 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
   handleInput(data: string): void {
     if (this.stream) {
       this.stream.write(data);
+      return;
+    }
+
+    if (this.nativeProcess?.stdin.writable) {
+      this.nativeProcess.stdin.write(data);
     }
   }
 
@@ -63,7 +70,13 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
    * Whether the SSH stream is currently active and can receive input
    */
   isStreamActive(): boolean {
-    return this.stream !== null && !this.isCleanedUp;
+    if (this.stream && !this.isCleanedUp) {
+      return true;
+    }
+
+    return this.nativeProcess !== null &&
+      this.nativeProcess.exitCode === null &&
+      !this.isCleanedUp;
   }
 
   /**
@@ -83,6 +96,11 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
     try {
       this.writeEmitter.fire(`\r\n🔌 Connecting to ${this.host.config.host}...\r\n`);
 
+      if (this.host.config.authMethod === 'openssh') {
+        this.connectViaOpenSshConfig();
+        return;
+      }
+
       this.client = new Client();
 
       // Set up event handlers
@@ -99,6 +117,41 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
     } catch (error) {
       this.handleError(error);
     }
+  }
+
+  private connectViaOpenSshConfig(): void {
+    const sshProcess = spawn(
+      'ssh',
+      ['-tt', this.host.config.host],
+      {
+        env: process.env,
+        stdio: 'pipe'
+      }
+    );
+
+    this.nativeProcess = sshProcess;
+
+    sshProcess.on('spawn', () => {
+      this.writeEmitter.fire('✅ Connected via OpenSSH config\r\n\r\n');
+      this.hasEverConnected = true;
+      this.updateStatus(ConnectionStatus.CONNECTED);
+    });
+
+    sshProcess.stdout.on('data', (data: Buffer) => {
+      this.writeEmitter.fire(data.toString());
+    });
+
+    sshProcess.stderr.on('data', (data: Buffer) => {
+      this.writeEmitter.fire(data.toString());
+    });
+
+    sshProcess.on('error', (err: Error) => {
+      this.handleError(err);
+    });
+
+    sshProcess.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
+      this.onOpenSshProcessClose(code, signal);
+    });
   }
 
   /**
@@ -161,6 +214,9 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
         if (!config.agent) {
           throw new Error('SSH agent not available (SSH_AUTH_SOCK not set)');
         }
+        break;
+
+      case 'openssh':
         break;
     }
 
@@ -284,6 +340,32 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
     void this.promptReconnect();
   }
 
+  private onOpenSshProcessClose(
+    code: number | null,
+    signal: NodeJS.Signals | null
+  ): void {
+    if (this.isCleanedUp) {
+      return;
+    }
+
+    this.streamClosedGracefully = true;
+    this.nativeProcess = null;
+
+    if (code === 0) {
+      this.writeEmitter.fire('\r\n\n✨ Connection closed\r\n');
+      this.updateStatus(ConnectionStatus.DISCONNECTED, { exitCode: 0 });
+      this.closeEmitter.fire(0);
+      this.cleanup();
+      return;
+    }
+
+    const details = signal ? `signal: ${signal}` : `exit code: ${code ?? 1}`;
+    this.writeEmitter.fire(`\r\n\n❌ Connection terminated (${details})\r\n`);
+    this.updateStatus(ConnectionStatus.ERROR, { error: details, exitCode: code ?? 1 });
+    this.closeEmitter.fire(1);
+    this.cleanup();
+  }
+
   /**
    * Handle connection errors
    */
@@ -384,6 +466,17 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
       this.client.removeAllListeners();
       this.client.end();
       this.client = null;
+    }
+
+    if (this.nativeProcess) {
+      this.nativeProcess.removeAllListeners();
+      this.nativeProcess.stdout?.removeAllListeners();
+      this.nativeProcess.stderr?.removeAllListeners();
+      this.nativeProcess.stdin?.removeAllListeners();
+      if (!this.nativeProcess.killed && this.nativeProcess.exitCode === null) {
+        this.nativeProcess.kill();
+      }
+      this.nativeProcess = null;
     }
   }
 

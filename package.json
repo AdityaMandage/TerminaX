@@ -256,11 +256,6 @@
           "group": "navigation@2"
         },
         {
-          "command": "terminax.refresh",
-          "when": "view == terminax-hosts",
-          "group": "navigation@3"
-        },
-        {
           "command": "terminax.connectMultiple",
           "when": "view == terminax-hosts",
           "group": "navigation@4"
@@ -271,19 +266,9 @@
           "group": "navigation@8"
         },
         {
-          "command": "terminax.broadcastCommand",
-          "when": "view == terminax-hosts && terminax.broadcastActive",
-          "group": "navigation@5"
-        },
-        {
-          "command": "terminax.stopBroadcast",
-          "when": "view == terminax-hosts && terminax.broadcastActive",
-          "group": "navigation@6"
-        },
-        {
-          "command": "terminax.startBroadcast",
-          "when": "view == terminax-hosts && !terminax.broadcastActive",
-          "group": "navigation@7"
+          "command": "terminax.refresh",
+          "when": "view == terminax-hosts",
+          "group": "navigation@99"
         }
       ],
       "view/item/context": [
@@ -331,21 +316,6 @@
           "command": "terminax.deleteFolder",
           "when": "view == terminax-hosts && viewItem == folder",
           "group": "edit@2"
-        },
-        {
-          "command": "terminax.startBroadcast",
-          "when": "view == terminax-hosts && viewItem == folder && !terminax.broadcastActive",
-          "group": "broadcast@1"
-        },
-        {
-          "command": "terminax.broadcastCommand",
-          "when": "view == terminax-hosts && viewItem == folder && terminax.broadcastActive",
-          "group": "broadcast@2"
-        },
-        {
-          "command": "terminax.stopBroadcast",
-          "when": "view == terminax-hosts && viewItem == folder && terminax.broadcastActive",
-          "group": "broadcast@3"
         }
       ],
       "commandPalette": [
@@ -359,6 +329,18 @@
         },
         {
           "command": "terminax.workspaceToggleBroadcast",
+          "when": "false"
+        },
+        {
+          "command": "terminax.startBroadcast",
+          "when": "false"
+        },
+        {
+          "command": "terminax.stopBroadcast",
+          "when": "false"
+        },
+        {
+          "command": "terminax.broadcastCommand",
           "when": "false"
         }
       ]
@@ -389,16 +371,10 @@
         "when": "focusedView == terminax-hosts"
       },
       {
-        "command": "terminax.startBroadcast",
-        "key": "ctrl+alt+shift+b",
-        "mac": "cmd+alt+shift+b",
-        "when": "focusedView == terminax-hosts"
-      },
-      {
-        "command": "terminax.stopBroadcast",
-        "key": "ctrl+alt+shift+x",
-        "mac": "cmd+alt+shift+x",
-        "when": "focusedView == terminax-hosts"
+        "command": "terminax.workspaceToggleBroadcast",
+        "key": "ctrl+b",
+        "mac": "cmd+b",
+        "when": "activeWebviewPanelId == 'terminaxWorkspacePanel'"
       },
       {
         "command": "terminax.openHelp",

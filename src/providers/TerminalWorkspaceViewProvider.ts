@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { spawn } from 'child_process';
 import { ConfigManager } from '../managers/ConfigManager';
 import {
   WorkspaceSessionEvent,
@@ -6,6 +7,7 @@ import {
 } from '../managers/WorkspaceSessionManager';
 import { SSHHost } from '../models/SSHHost';
 import { getNodeLocationPath } from '../utils/treeHelpers';
+import { formatHostConnectionTarget } from '../utils/hostDisplay';
 
 interface WebviewMessage {
   type: string;
@@ -242,6 +244,12 @@ class WorkspacePanelInstance implements vscode.Disposable {
       case 'pickHosts':
         await this.promptAndConnectHosts();
         break;
+      case 'openLocalTerminal':
+        this.openLocalTerminal();
+        break;
+      case 'openSystemTerminal':
+        await this.openSystemTerminal();
+        break;
       case 'connectHosts':
         if (message.hostIds && message.hostIds.length > 0) {
           const hosts = message.hostIds
@@ -320,6 +328,74 @@ class WorkspacePanelInstance implements vscode.Disposable {
     return Math.floor(value);
   }
 
+  private openLocalTerminal(): void {
+    const terminal = vscode.window.createTerminal({
+      name: 'TerminaX Local',
+      location: vscode.TerminalLocation.Editor
+    });
+    terminal.show(false);
+  }
+
+  private async openSystemTerminal(): Promise<void> {
+    const cwd =
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ||
+      vscode.workspace.rootPath ||
+      process.cwd();
+
+    const tryVscodeCommand = async (command: string): Promise<boolean> => {
+      try {
+        await vscode.commands.executeCommand(command);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (await tryVscodeCommand('workbench.action.terminal.openNativeConsole')) {
+      return;
+    }
+
+    const launchDetached = (command: string, args: string[]): boolean => {
+      try {
+        const child = spawn(command, args, {
+          cwd,
+          detached: true,
+          stdio: 'ignore'
+        });
+        child.unref();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (process.platform === 'win32') {
+      if (launchDetached('cmd.exe', ['/c', 'start', 'cmd.exe'])) {
+        return;
+      }
+    } else if (process.platform === 'darwin') {
+      if (launchDetached('open', ['-a', 'Terminal', cwd])) {
+        return;
+      }
+    } else {
+      const linuxCandidates: Array<{ cmd: string; args: string[] }> = [
+        { cmd: 'x-terminal-emulator', args: [] },
+        { cmd: 'gnome-terminal', args: ['--working-directory', cwd] },
+        { cmd: 'konsole', args: ['--workdir', cwd] },
+        { cmd: 'xfce4-terminal', args: ['--working-directory', cwd] },
+        { cmd: 'xterm', args: [] }
+      ];
+
+      for (const candidate of linuxCandidates) {
+        if (launchDetached(candidate.cmd, candidate.args)) {
+          return;
+        }
+      }
+    }
+
+    vscode.window.showWarningMessage('Unable to launch system terminal on this environment.');
+  }
+
   private async promptAndConnectHosts(initialHostIds: Set<string> = new Set()): Promise<void> {
     const hosts = this.configManager.getAllVisibleHosts();
     if (hosts.length === 0) {
@@ -330,7 +406,7 @@ class WorkspacePanelInstance implements vscode.Disposable {
     const picks = await vscode.window.showQuickPick(
       hosts.map((host) => ({
         label: host.label,
-        description: `${host.config.username}@${host.config.host}:${host.config.port}`,
+        description: formatHostConnectionTarget(host),
         detail: getNodeLocationPath(host, this.configManager),
         picked: initialHostIds.has(host.id),
         host
@@ -467,20 +543,61 @@ class WorkspacePanelInstance implements vscode.Disposable {
       grid-template-columns: 1fr;
       gap: 6px;
       align-content: stretch;
+      align-items: stretch;
+      overflow: auto;
+      position: relative;
+    }
+
+    .grid.single-focus {
+      overflow: hidden;
     }
 
     .empty {
       border: 1px dashed var(--border);
       color: var(--muted);
-      display: grid;
-      place-items: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       font-size: 12px;
       min-height: 140px;
+      width: 100%;
+      flex: 1 1 100%;
+      height: calc(100% - 2px);
     }
 
     .empty.error {
       color: var(--error);
       border-color: var(--error);
+    }
+
+    .empty-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      text-align: center;
+      max-width: 520px;
+      padding: 10px;
+    }
+
+    .empty-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .empty-btn {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      font-size: 12px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+
+    .empty-btn:hover {
+      border-color: var(--focus);
     }
 
     .pane {
@@ -490,10 +607,21 @@ class WorkspacePanelInstance implements vscode.Disposable {
       flex-direction: column;
       border: 1px solid var(--border);
       background: var(--bg);
+      position: relative;
+    }
+
+    .pane.hidden {
+      display: none;
     }
 
     .pane.span-all {
       grid-column: 1 / -1;
+    }
+
+    .grid.single-focus .pane.focused {
+      flex: 1 1 100% !important;
+      width: 100% !important;
+      height: 100%;
     }
 
     .pane:focus-within {
@@ -561,10 +689,92 @@ class WorkspacePanelInstance implements vscode.Disposable {
       max-width: 36%;
     }
 
-    .close-btn {
-      width: 20px;
+    .status:empty {
+      display: none;
+    }
+
+    .header-btn {
+      width: 22px;
+      height: 20px;
       padding: 0;
       line-height: 18px;
+      font-size: 12px;
+      text-align: center;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .header-btn svg {
+      width: 12px;
+      height: 12px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .focus-btn {
+      font-size: 11px;
+    }
+
+    .column-splitter {
+      position: absolute;
+      width: 6px;
+      cursor: col-resize;
+      user-select: none;
+      touch-action: none;
+      z-index: 4;
+      background: transparent;
+    }
+
+    .column-splitter::after {
+      content: '';
+      position: absolute;
+      left: 2px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--border);
+      opacity: 0.8;
+    }
+
+    .column-splitter:hover::after {
+      background: var(--focus);
+    }
+
+    .grid.single-focus .column-splitter {
+      display: none;
+    }
+
+    .row-splitter {
+      position: absolute;
+      height: 6px;
+      cursor: row-resize;
+      user-select: none;
+      touch-action: none;
+      z-index: 4;
+      background: transparent;
+    }
+
+    .row-splitter::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 2px;
+      height: 2px;
+      background: var(--border);
+      opacity: 0.8;
+    }
+
+    .row-splitter:hover::after {
+      background: var(--focus);
+    }
+
+    .grid.single-focus .row-splitter {
+      display: none;
     }
 
     .terminal-surface {
@@ -617,8 +827,15 @@ class WorkspacePanelInstance implements vscode.Disposable {
     const vscode = acquireVsCodeApi();
     const sessions = new Map();
     const panes = new Map();
+    const columnSplitters = [];
+    const rowSplitters = [];
     const MAX_OUTPUT = 250000;
+    const MIN_PANE_WIDTH = 300;
+    const MIN_PANE_HEIGHT = 220;
     let workspaceBroadcastEnabled = false;
+    let focusedSessionId = null;
+    let columnWeights = [1];
+    let rowWeights = [1];
     const BRACKETED_PASTE_START = '\\u001b[200~';
     const BRACKETED_PASTE_END = '\\u001b[201~';
 
@@ -845,6 +1062,10 @@ class WorkspacePanelInstance implements vscode.Disposable {
         sessions.set(normalized.id, normalized);
       }
 
+      if (focusedSessionId && !sessions.has(focusedSessionId)) {
+        focusedSessionId = null;
+      }
+
       if (!hasTerminalRuntime) {
         return;
       }
@@ -923,6 +1144,10 @@ class WorkspacePanelInstance implements vscode.Disposable {
         return;
       }
 
+      if (focusedSessionId === sessionId) {
+        focusedSessionId = null;
+      }
+
       sessions.delete(sessionId);
       disposePane(sessionId);
 
@@ -972,6 +1197,19 @@ class WorkspacePanelInstance implements vscode.Disposable {
       updateGridLayout();
     }
 
+    function getHeaderIconMarkup(kind) {
+      if (kind === 'focus') {
+        return '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="0.8"></rect></svg>';
+      }
+
+      if (kind === 'restore') {
+        return '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="5" width="8" height="8" rx="0.8"></rect><rect x="5.5" y="2" width="8" height="8" rx="0.8"></rect></svg>';
+      }
+
+      // close
+      return '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4L12 12"></path><path d="M12 4L4 12"></path></svg>';
+    }
+
     function createPane(session) {
       const root = document.createElement('section');
       root.className = 'pane';
@@ -996,11 +1234,21 @@ class WorkspacePanelInstance implements vscode.Disposable {
       const status = document.createElement('span');
       status.className = 'status';
 
+      const focusBtn = document.createElement('button');
+      focusBtn.type = 'button';
+      focusBtn.className = 'header-btn focus-btn';
+      focusBtn.title = 'Focus this terminal';
+      focusBtn.innerHTML = getHeaderIconMarkup('focus');
+      focusBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        togglePaneFocus(session.id);
+      });
+
       const closeBtn = document.createElement('button');
       closeBtn.type = 'button';
-      closeBtn.className = 'close-btn';
+      closeBtn.className = 'header-btn close-btn';
       closeBtn.title = 'Disconnect session';
-      closeBtn.textContent = 'x';
+      closeBtn.innerHTML = getHeaderIconMarkup('close');
       closeBtn.addEventListener('click', (event) => {
         event.stopPropagation();
         vscode.postMessage({
@@ -1009,7 +1257,7 @@ class WorkspacePanelInstance implements vscode.Disposable {
         });
       });
 
-      header.append(dot, hostMeta, status, closeBtn);
+      header.append(dot, hostMeta, status, focusBtn, closeBtn);
 
       const terminalSurface = document.createElement('div');
       terminalSurface.className = 'terminal-surface';
@@ -1049,6 +1297,7 @@ class WorkspacePanelInstance implements vscode.Disposable {
         hostLabel,
         hostSubtitle,
         status,
+        focusBtn,
         term,
         fitAddon,
         resizeObserver: new ResizeObserver(() => {
@@ -1091,9 +1340,275 @@ class WorkspacePanelInstance implements vscode.Disposable {
       return pane;
     }
 
+    function togglePaneFocus(sessionId) {
+      if (!panes.has(sessionId)) {
+        return;
+      }
+
+      const previousFocusedSessionId = focusedSessionId;
+      focusedSessionId = focusedSessionId === sessionId ? null : sessionId;
+      updateGridLayout();
+
+      if (previousFocusedSessionId && previousFocusedSessionId !== focusedSessionId) {
+        scheduleFit(previousFocusedSessionId);
+      }
+      if (focusedSessionId) {
+        scheduleFit(focusedSessionId);
+      }
+    }
+
+    function normalizeWeights(weights, count) {
+      const safeCount = Math.max(1, count);
+      const sanitized = weights.map((weight) => (Number.isFinite(weight) && weight > 0 ? weight : 0));
+      const total = sanitized.reduce((sum, weight) => sum + weight, 0);
+
+      if (total <= 0) {
+        const equal = 1 / safeCount;
+        return Array.from({ length: safeCount }, () => equal);
+      }
+
+      return sanitized.map((weight) => weight / total);
+    }
+
+    function normalizeColumnWeights() {
+      columnWeights = normalizeWeights(columnWeights, columnWeights.length || 1);
+    }
+
+    function ensureColumnWeights(columns) {
+      if (columns <= 0) {
+        columnWeights = [1];
+        return;
+      }
+
+      if (columnWeights.length !== columns) {
+        const equal = 1 / columns;
+        columnWeights = Array.from({ length: columns }, () => equal);
+        return;
+      }
+
+      normalizeColumnWeights();
+    }
+
+    function normalizeRowWeights() {
+      rowWeights = normalizeWeights(rowWeights, rowWeights.length || 1);
+    }
+
+    function ensureRowWeights(rows) {
+      if (rows <= 0) {
+        rowWeights = [1];
+        return;
+      }
+
+      if (rowWeights.length !== rows) {
+        const equal = 1 / rows;
+        rowWeights = Array.from({ length: rows }, () => equal);
+        return;
+      }
+
+      normalizeRowWeights();
+    }
+
+    function buildLayoutRows(orderedSessions, columns, spanLastSingle) {
+      if (orderedSessions.length === 0) {
+        return [];
+      }
+
+      const rows = [];
+      if (!spanLastSingle) {
+        for (let index = 0; index < orderedSessions.length; index += columns) {
+          rows.push(orderedSessions.slice(index, index + columns));
+        }
+        return rows;
+      }
+
+      const regularCount = orderedSessions.length - 1;
+      for (let index = 0; index < regularCount; index += columns) {
+        rows.push(orderedSessions.slice(index, index + columns));
+      }
+      rows.push([orderedSessions[orderedSessions.length - 1]]);
+      return rows;
+    }
+
+    function clearColumnSplitters() {
+      while (columnSplitters.length > 0) {
+        const splitter = columnSplitters.pop();
+        splitter.remove();
+      }
+    }
+
+    function clearRowSplitters() {
+      while (rowSplitters.length > 0) {
+        const splitter = rowSplitters.pop();
+        splitter.remove();
+      }
+    }
+
+    function renderColumnSplitters(layoutRows, columns) {
+      clearColumnSplitters();
+
+      if (focusedSessionId || columns < 2) {
+        return;
+      }
+
+      const gridRect = gridEl.getBoundingClientRect();
+
+      for (let rowIndex = 0; rowIndex < layoutRows.length; rowIndex++) {
+        const rowSessions = layoutRows[rowIndex];
+        if (!rowSessions || rowSessions.length < 2) {
+          continue;
+        }
+
+        for (let boundaryIndex = 0; boundaryIndex < columns - 1; boundaryIndex++) {
+          const leftSession = rowSessions[boundaryIndex];
+          const rightSession = rowSessions[boundaryIndex + 1];
+          if (!leftSession || !rightSession) {
+            continue;
+          }
+
+          const leftPane = panes.get(leftSession.id);
+          const rightPane = panes.get(rightSession.id);
+          if (!leftPane || !rightPane) {
+            continue;
+          }
+
+          const leftRect = leftPane.root.getBoundingClientRect();
+          const rightRect = rightPane.root.getBoundingClientRect();
+          const rowTop = Math.round(Math.min(leftRect.top, rightRect.top) - gridRect.top);
+          const rowBottom = Math.round(Math.max(leftRect.bottom, rightRect.bottom) - gridRect.top);
+
+          const splitter = document.createElement('div');
+          splitter.className = 'column-splitter';
+          splitter.style.top = rowTop + 'px';
+          splitter.style.height = Math.max(6, rowBottom - rowTop) + 'px';
+          splitter.style.left = (Math.round(((leftRect.right + rightRect.left) / 2) - gridRect.left) - 3) + 'px';
+
+          splitter.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const pairStart = leftRect.left;
+            const pairEnd = rightRect.right;
+            const pairWidth = Math.max(1, pairEnd - pairStart);
+            if (pairWidth <= (MIN_PANE_WIDTH * 2)) {
+              return;
+            }
+
+            const pairWeight = columnWeights[boundaryIndex] + columnWeights[boundaryIndex + 1];
+            const minRatio = MIN_PANE_WIDTH / pairWidth;
+            const maxRatio = 1 - minRatio;
+
+            const onPointerMove = (moveEvent) => {
+              const clampedX = Math.max(
+                pairStart + MIN_PANE_WIDTH,
+                Math.min(pairEnd - MIN_PANE_WIDTH, moveEvent.clientX)
+              );
+
+              let ratio = (clampedX - pairStart) / pairWidth;
+              ratio = Math.max(minRatio, Math.min(maxRatio, ratio));
+
+              columnWeights[boundaryIndex] = pairWeight * ratio;
+              columnWeights[boundaryIndex + 1] = pairWeight * (1 - ratio);
+              normalizeColumnWeights();
+              updateGridLayout();
+            };
+
+            const onPointerUp = () => {
+              window.removeEventListener('pointermove', onPointerMove);
+              window.removeEventListener('pointerup', onPointerUp);
+            };
+
+            window.addEventListener('pointermove', onPointerMove);
+            window.addEventListener('pointerup', onPointerUp);
+          });
+
+          gridEl.appendChild(splitter);
+          columnSplitters.push(splitter);
+        }
+      }
+    }
+
+    function renderRowSplitters(layoutRows) {
+      clearRowSplitters();
+
+      if (focusedSessionId || layoutRows.length < 2) {
+        return;
+      }
+
+      const gridRect = gridEl.getBoundingClientRect();
+      for (let rowIndex = 0; rowIndex < layoutRows.length - 1; rowIndex++) {
+        const topRow = layoutRows[rowIndex];
+        const bottomRow = layoutRows[rowIndex + 1];
+        const topSession = topRow && topRow.length > 0 ? topRow[0] : undefined;
+        const bottomSession = bottomRow && bottomRow.length > 0 ? bottomRow[0] : undefined;
+        if (!topSession || !bottomSession) {
+          continue;
+        }
+
+        const topPane = panes.get(topSession.id);
+        const bottomPane = panes.get(bottomSession.id);
+        if (!topPane || !bottomPane) {
+          continue;
+        }
+
+        const topRect = topPane.root.getBoundingClientRect();
+        const bottomRect = bottomPane.root.getBoundingClientRect();
+        const splitter = document.createElement('div');
+        splitter.className = 'row-splitter';
+        splitter.style.left = '6px';
+        splitter.style.right = '6px';
+        splitter.style.top = (Math.round(((topRect.bottom + bottomRect.top) / 2) - gridRect.top) - 3) + 'px';
+
+        splitter.addEventListener('pointerdown', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+
+          const pairStart = topRect.top;
+          const pairEnd = bottomRect.bottom;
+          const pairHeight = Math.max(1, pairEnd - pairStart);
+          if (pairHeight <= (MIN_PANE_HEIGHT * 2)) {
+            return;
+          }
+
+          const pairWeight = rowWeights[rowIndex] + rowWeights[rowIndex + 1];
+          const minRatio = MIN_PANE_HEIGHT / pairHeight;
+          const maxRatio = 1 - minRatio;
+
+          const onPointerMove = (moveEvent) => {
+            const clampedY = Math.max(
+              pairStart + MIN_PANE_HEIGHT,
+              Math.min(pairEnd - MIN_PANE_HEIGHT, moveEvent.clientY)
+            );
+
+            let ratio = (clampedY - pairStart) / pairHeight;
+            ratio = Math.max(minRatio, Math.min(maxRatio, ratio));
+
+            rowWeights[rowIndex] = pairWeight * ratio;
+            rowWeights[rowIndex + 1] = pairWeight * (1 - ratio);
+            normalizeRowWeights();
+            updateGridLayout();
+          };
+
+          const onPointerUp = () => {
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
+          };
+
+          window.addEventListener('pointermove', onPointerMove);
+          window.addEventListener('pointerup', onPointerUp);
+        });
+
+        gridEl.appendChild(splitter);
+        rowSplitters.push(splitter);
+      }
+    }
+
     function scheduleFit(sessionId) {
       const pane = panes.get(sessionId);
       if (!pane) {
+        return;
+      }
+
+      if (pane.root.classList.contains('hidden')) {
         return;
       }
 
@@ -1146,6 +1661,12 @@ class WorkspacePanelInstance implements vscode.Disposable {
       pane.hostSubtitle.textContent = session.hostSubtitle;
       pane.status.textContent = formatStatus(session);
       pane.dot.className = 'status-dot ' + statusClass(session.status);
+      pane.focusBtn.innerHTML = getHeaderIconMarkup(
+        focusedSessionId === sessionId ? 'restore' : 'focus'
+      );
+      pane.focusBtn.title = focusedSessionId === sessionId
+        ? 'Restore multi-pane layout'
+        : 'Focus this terminal';
     }
 
     function focusSession(hostId, sessionId) {
@@ -1185,15 +1706,11 @@ class WorkspacePanelInstance implements vscode.Disposable {
     }
 
     function formatStatus(session) {
-      if (session.status === 'connected') {
-        return 'connected';
-      }
-
       if (session.status === 'error') {
-        return session.lastError ? 'error: ' + session.lastError : 'error';
+        return 'error';
       }
 
-      return 'disconnected';
+      return '';
     }
 
     function reorderPaneRoots() {
@@ -1208,7 +1725,6 @@ class WorkspacePanelInstance implements vscode.Disposable {
           continue;
         }
 
-        pane.root.classList.remove('span-all');
         gridEl.appendChild(pane.root);
       }
     }
@@ -1216,9 +1732,20 @@ class WorkspacePanelInstance implements vscode.Disposable {
     function updateGridLayout() {
       const count = panes.size;
       if (count <= 0) {
+        gridEl.classList.remove('single-focus');
         gridEl.style.gridTemplateColumns = '1fr';
+        gridEl.style.gridTemplateRows = '1fr';
+        clearColumnSplitters();
+        clearRowSplitters();
         return;
       }
+
+      if (focusedSessionId && !panes.has(focusedSessionId)) {
+        focusedSessionId = null;
+      }
+
+      const focusModeEnabled = Boolean(focusedSessionId);
+      gridEl.classList.toggle('single-focus', focusModeEnabled);
 
       let columns = 1;
       if (count === 2) {
@@ -1229,24 +1756,54 @@ class WorkspacePanelInstance implements vscode.Disposable {
         columns = 3;
       }
 
-      gridEl.style.gridTemplateColumns = 'repeat(' + columns + ', minmax(300px, 1fr))';
-
       const ordered = getSortedSessions();
-      for (const session of ordered) {
-        const pane = panes.get(session.id);
-        if (pane) {
-          pane.root.classList.remove('span-all');
-        }
+      const spanLastSingle = !focusModeEnabled && count > columns && (count % columns === 1);
+      const layoutRows = buildLayoutRows(ordered, columns, spanLastSingle);
+      const rows = Math.max(1, layoutRows.length);
+
+      if (focusModeEnabled) {
+        gridEl.style.gridTemplateColumns = '1fr';
+        gridEl.style.gridTemplateRows = '1fr';
+        clearColumnSplitters();
+        clearRowSplitters();
+      } else {
+        ensureColumnWeights(columns);
+        ensureRowWeights(rows);
+        gridEl.style.gridTemplateColumns = columnWeights
+          .map((weight) => 'minmax(' + MIN_PANE_WIDTH + 'px, ' + weight.toFixed(6) + 'fr)')
+          .join(' ');
+        gridEl.style.gridTemplateRows = rowWeights
+          .map((weight) => 'minmax(' + MIN_PANE_HEIGHT + 'px, ' + weight.toFixed(6) + 'fr)')
+          .join(' ');
       }
 
-      if (count > 2 && count % columns === 1) {
-        const last = ordered[ordered.length - 1];
-        if (last) {
-          const pane = panes.get(last.id);
-          if (pane) {
-            pane.root.classList.add('span-all');
-          }
+      for (const session of ordered) {
+        const pane = panes.get(session.id);
+        if (!pane) {
+          continue;
         }
+
+        const isFocused = focusModeEnabled && focusedSessionId === session.id;
+        const isSpanAll = spanLastSingle && session.id === ordered[ordered.length - 1].id;
+        pane.root.classList.toggle('focused', isFocused);
+        pane.root.classList.toggle('hidden', focusModeEnabled && !isFocused);
+        pane.root.classList.toggle('span-all', !focusModeEnabled && isSpanAll);
+
+        if (focusModeEnabled) {
+          pane.root.style.width = '';
+          pane.root.style.height = '';
+          updatePaneHeader(session.id);
+          continue;
+        }
+
+        pane.root.style.width = '';
+        pane.root.style.height = '';
+        updatePaneHeader(session.id);
+      }
+
+      if (!focusModeEnabled) {
+        renderColumnSplitters(layoutRows, columns);
+        renderRowSplitters(layoutRows);
       }
     }
 
@@ -1258,6 +1815,10 @@ class WorkspacePanelInstance implements vscode.Disposable {
       const pane = panes.get(sessionId);
       if (!pane) {
         return;
+      }
+
+      if (focusedSessionId === sessionId) {
+        focusedSessionId = null;
       }
 
       pane.resizeObserver.disconnect();
@@ -1286,11 +1847,49 @@ class WorkspacePanelInstance implements vscode.Disposable {
       for (const sessionId of Array.from(panes.keys())) {
         disposePane(sessionId);
       }
+      clearColumnSplitters();
+      clearRowSplitters();
 
       gridEl.innerHTML = '';
       const empty = document.createElement('div');
       empty.className = 'empty';
-      empty.textContent = 'No active sessions. Use "TerminaX: Workspace Add Hosts" to open split terminals.';
+
+      const card = document.createElement('div');
+      card.className = 'empty-card';
+
+      const caption = document.createElement('div');
+      caption.textContent = 'No active sessions in this workspace.';
+
+      const actions = document.createElement('div');
+      actions.className = 'empty-actions';
+
+      const openHostBtn = document.createElement('button');
+      openHostBtn.className = 'empty-btn';
+      openHostBtn.type = 'button';
+      openHostBtn.textContent = 'Open Host';
+      openHostBtn.addEventListener('click', () => {
+        vscode.postMessage({ type: 'pickHosts' });
+      });
+
+      const openLocalBtn = document.createElement('button');
+      openLocalBtn.className = 'empty-btn';
+      openLocalBtn.type = 'button';
+      openLocalBtn.textContent = 'Open Local Terminal';
+      openLocalBtn.addEventListener('click', () => {
+        vscode.postMessage({ type: 'openLocalTerminal' });
+      });
+
+      const openSystemBtn = document.createElement('button');
+      openSystemBtn.className = 'empty-btn';
+      openSystemBtn.type = 'button';
+      openSystemBtn.textContent = 'Open System Terminal';
+      openSystemBtn.addEventListener('click', () => {
+        vscode.postMessage({ type: 'openSystemTerminal' });
+      });
+
+      actions.append(openHostBtn, openLocalBtn, openSystemBtn);
+      card.append(caption, actions);
+      empty.appendChild(card);
       gridEl.appendChild(empty);
       updateGridLayout();
     }
@@ -1299,6 +1898,8 @@ class WorkspacePanelInstance implements vscode.Disposable {
       for (const sessionId of Array.from(panes.keys())) {
         disposePane(sessionId);
       }
+      clearColumnSplitters();
+      clearRowSplitters();
 
       gridEl.innerHTML = '';
       const empty = document.createElement('div');

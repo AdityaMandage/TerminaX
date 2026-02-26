@@ -91,13 +91,12 @@ Background TCP health checks for all configured hosts:
 - Click "Connect Multiple Hosts" or use `Ctrl+Alt+Shift+C` / `Cmd+Alt+Shift+C`
 - Hosts open in the Terminal Workspace with split-screen layout
 
-### Using Broadcast Mode
+### Using Workspace Broadcast Mode
 
-1. Select target hosts or folder
-2. Execute `TerminaX: Start Broadcast` or use `Ctrl+Alt+Shift+B` / `Cmd+Alt+Shift+B`
-3. Enter command when prompted
-4. Command executes on all active terminals in broadcast scope
-5. Use `Ctrl+Alt+Shift+X` / `Cmd+Alt+Shift+X` to stop broadcast
+1. Open a Terminal Workspace and connect at least one host
+2. Enable workspace broadcast from the workspace titlebar button, or press `Ctrl+B` / `Cmd+B` while the workspace tab is active
+3. Type in any workspace terminal pane
+4. Input is mirrored to all other connected sessions in that same workspace
 
 ### Organizing Hosts
 
@@ -113,7 +112,6 @@ Background TCP health checks for all configured hosts:
 **Folder Operations:**
 - Right-click folder for context menu
 - "Connect Multiple Hosts" to open all hosts in folder
-- "Start Broadcast" to broadcast to folder's hosts
 
 ### Configuration Import/Export
 
@@ -156,7 +154,7 @@ Settings are available under `File > Preferences > Settings > Extensions > Termi
 
 ## Keyboard Shortcuts
 
-All shortcuts are scoped to the TerminaX hosts view:
+Most shortcuts are scoped to the TerminaX hosts view:
 
 | Shortcut | Action |
 |----------|--------|
@@ -164,8 +162,7 @@ All shortcuts are scoped to the TerminaX hosts view:
 | `Ctrl+Alt+Shift+F` / `Cmd+Alt+Shift+F` | Search Hosts Tree |
 | `Ctrl+Alt+Shift+H` / `Cmd+Alt+Shift+H` | Add Host |
 | `Ctrl+Alt+Shift+N` / `Cmd+Alt+Shift+N` | Add Folder |
-| `Ctrl+Alt+Shift+B` / `Cmd+Alt+Shift+B` | Start Broadcast |
-| `Ctrl+Alt+Shift+X` / `Cmd+Alt+Shift+X` | Stop Broadcast |
+| `Ctrl+B` / `Cmd+B` | Toggle Workspace Broadcast (when TerminaX Workspace tab is active) |
 | `Ctrl+Alt+Shift+T` / `Cmd+Alt+Shift+T` | Open Terminal Workspace |
 | `Ctrl+Alt+Shift+/` / `Cmd+Alt+Shift+/` | Open Help |
 
@@ -180,9 +177,7 @@ Available via Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 - `TerminaX: Connect` - Connect to host
 - `TerminaX: Connect Multiple Hosts` - Multi-host connection
 - `TerminaX: Disconnect` - Close host connections
-- `TerminaX: Start Broadcast` - Enable broadcast mode
-- `TerminaX: Stop Broadcast` - Disable broadcast mode
-- `TerminaX: Send Broadcast Command` - Execute broadcast command
+- `TerminaX: Workspace Toggle Broadcast` - Toggle broadcast in active workspace
 - `TerminaX: Open Terminal Workspace` - Open workspace panel
 - `TerminaX: Search Hosts Tree` - Search hosts and folders
 - `TerminaX: Refresh` - Refresh tree and run health checks

@@ -3,6 +3,7 @@ import { ConnectionMetadata, ConnectionStatus } from '../models/ConnectionState'
 import { SSHHost } from '../models/SSHHost';
 import { SSHPseudoTerminal } from '../providers/SSHPseudoTerminal';
 import { CredentialService } from '../services/CredentialService';
+import { formatHostConnectionTarget } from '../utils/hostDisplay';
 
 const MAX_OUTPUT_BUFFER = 250_000;
 
@@ -141,7 +142,7 @@ export class WorkspaceSessionManager implements vscode.Disposable {
       workspaceId,
       hostId: host.id,
       hostLabel: host.label,
-      hostSubtitle: `${host.config.username}@${host.config.host}:${host.config.port}`,
+      hostSubtitle: formatHostConnectionTarget(host),
       status: ConnectionStatus.DISCONNECTED,
       createdAt: Date.now(),
       output: ''
@@ -170,7 +171,9 @@ export class WorkspaceSessionManager implements vscode.Disposable {
             return;
           }
 
-          this.updateSessionStatus(sessionId, ConnectionStatus.DISCONNECTED);
+          this.updateSessionStatus(sessionId, ConnectionStatus.ERROR, {
+            error: 'Session terminated unexpectedly'
+          });
         })
       );
     }

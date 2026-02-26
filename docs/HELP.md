@@ -3,7 +3,7 @@
 ## Quick Actions
 - `Connect`: Use the inline connect icon on a host row.
 - `Connect Multiple Hosts`: Opens selected hosts directly in the custom `Terminal Workspace` split grid.
-- `Start Broadcast`: Select target hosts, then send one command to all active terminals.
+- `Workspace Broadcast`: Toggle in workspace to mirror typed input to all sessions in the active workspace.
 - `Search Hosts Tree`: Opens a top-center search picker for hosts/folders (name, IP/hostname, username, port, folder path).
 - `Refresh`: Reloads tree state and triggers an immediate health probe for all configured hosts.
 - `Open Terminal Workspace`: Opens a new split terminal workspace as an editor tab.
@@ -14,14 +14,13 @@
 - Selected folders include all hosts under them recursively.
 
 ## Keyboard Shortcuts
-Shortcuts are scoped to the TerminaX hosts view (`focusedView == terminax-hosts`).
+Most shortcuts are scoped to the TerminaX hosts view (`focusedView == terminax-hosts`).
 
 - `Ctrl+Alt+Shift+C` / `Cmd+Alt+Shift+C`: Connect Multiple Hosts
 - `Ctrl+Alt+Shift+F` / `Cmd+Alt+Shift+F`: Search Hosts Tree
 - `Ctrl+Alt+Shift+H` / `Cmd+Alt+Shift+H`: Add Host
 - `Ctrl+Alt+Shift+N` / `Cmd+Alt+Shift+N`: Add Folder
-- `Ctrl+Alt+Shift+B` / `Cmd+Alt+Shift+B`: Start Broadcast
-- `Ctrl+Alt+Shift+X` / `Cmd+Alt+Shift+X`: Stop Broadcast
+- `Ctrl+B` / `Cmd+B`: Toggle workspace broadcast (when `TerminaX Workspace` tab is active)
 - `Ctrl+Alt+Shift+T` / `Cmd+Alt+Shift+T`: Open Terminal Workspace
 - `Ctrl+Alt+Shift+/` / `Cmd+Alt+Shift+/`: Open Help
 

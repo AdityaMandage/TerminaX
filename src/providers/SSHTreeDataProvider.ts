@@ -7,6 +7,7 @@ import { ConnectionStatus, ConnectionStateTracker } from '../models/ConnectionSt
 import { HostHealthState, HostHealthStatus } from '../models/HealthState';
 import { ConfigManager } from '../managers/ConfigManager';
 import { formatDuration } from '../utils/treeHelpers';
+import { formatHostConnectionTarget, formatHostSummary } from '../utils/hostDisplay';
 
 /**
  * Reader interface for active session info (avoids tight coupling to ConnectionManager)
@@ -69,10 +70,16 @@ export class SSHTreeDataProvider
 
     const sessionCount = this.sessionReader?.getTerminalCount(element.id) ?? 0;
 
+    const folder = element.type === TreeNodeType.FOLDER
+      ? (element as SSHFolder)
+      : undefined;
+
     const item = new vscode.TreeItem(
       element.label,
       element.type === TreeNodeType.FOLDER
-        ? vscode.TreeItemCollapsibleState.Collapsed
+        ? (folder?.expanded === false
+          ? vscode.TreeItemCollapsibleState.Collapsed
+          : vscode.TreeItemCollapsibleState.Expanded)
         : sessionCount > 0
           ? vscode.TreeItemCollapsibleState.Collapsed
           : vscode.TreeItemCollapsibleState.None
@@ -243,7 +250,8 @@ export class SSHTreeDataProvider
       const hostFields = [
         host.config.host,
         host.config.username,
-        host.config.port.toString()
+        host.config.port.toString(),
+        host.config.authMethod
       ]
         .join(' ')
         .toLowerCase();
@@ -399,6 +407,13 @@ export class SSHTreeDataProvider
     status?: ConnectionStatus,
     health?: HostHealthState
   ): vscode.ThemeIcon {
+    if (health?.status === HostHealthStatus.UNHEALTHY) {
+      return new vscode.ThemeIcon(
+        'circle-filled',
+        new vscode.ThemeColor('terminal.ansiRed')
+      );
+    }
+
     switch (status) {
       case ConnectionStatus.CONNECTED:
         return new vscode.ThemeIcon(
@@ -423,13 +438,6 @@ export class SSHTreeDataProvider
           );
         }
 
-        if (health?.status === HostHealthStatus.UNHEALTHY) {
-          return new vscode.ThemeIcon(
-            'circle-filled',
-            new vscode.ThemeColor('terminal.ansiYellow')
-          );
-        }
-
         // Unknown health or never checked.
         return new vscode.ThemeIcon(
           'circle-outline',
@@ -450,7 +458,7 @@ export class SSHTreeDataProvider
     },
     health?: HostHealthState
   ): string {
-    const baseInfo = `${host.config.username}@${host.config.host}:${host.config.port}`;
+    const baseInfo = formatHostConnectionTarget(host);
     const healthInfo = this.formatHealthTooltip(health);
 
     if (!state || state.status === ConnectionStatus.DISCONNECTED) {
@@ -478,7 +486,7 @@ export class SSHTreeDataProvider
   }
 
   private getHostDescription(host: SSHHost, health?: HostHealthState): string {
-    const base = `${host.config.username}@${host.config.host}`;
+    const base = formatHostSummary(host);
     if (!health) {
       return base;
     }

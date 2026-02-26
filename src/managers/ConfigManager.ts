@@ -122,7 +122,10 @@ export class ConfigManager {
   /**
    * Update an existing node
    */
-  async updateNode(id: string, updates: Partial<TreeNode>): Promise<void> {
+  async updateNode(
+    id: string,
+    updates: Partial<TreeNode> | Partial<SSHHost> | Partial<SSHFolder>
+  ): Promise<void> {
     const node = this.nodesMap.get(id);
     if (node) {
       Object.assign(node, updates);
@@ -336,13 +339,30 @@ export class ConfigManager {
       `node(${nodeId}).config.authMethod`
     );
 
+    const username =
+      authMethod === 'openssh'
+        ? this.readOptionalString(
+          configRecord.username,
+          `node(${nodeId}).config.username`
+        ) || 'ssh-config'
+        : this.readRequiredString(
+          configRecord.username,
+          `node(${nodeId}).config.username`
+        );
+
+    const port =
+      authMethod === 'openssh'
+        ? this.readOptionalPort(
+          configRecord.port,
+          `node(${nodeId}).config.port`,
+          22
+        )
+        : this.readPort(configRecord.port, `node(${nodeId}).config.port`);
+
     const parsedConfig: SSHHost['config'] = {
       host: this.readRequiredString(configRecord.host, `node(${nodeId}).config.host`),
-      username: this.readRequiredString(
-        configRecord.username,
-        `node(${nodeId}).config.username`
-      ),
-      port: this.readPort(configRecord.port, `node(${nodeId}).config.port`),
+      username,
+      port,
       authMethod
     };
 
@@ -375,7 +395,12 @@ export class ConfigManager {
   }
 
   private readAuthMethod(value: unknown, fieldPath: string): AuthMethod {
-    if (value === 'password' || value === 'keyfile' || value === 'agent') {
+    if (
+      value === 'password' ||
+      value === 'keyfile' ||
+      value === 'agent' ||
+      value === 'openssh'
+    ) {
       return value;
     }
     throw new Error(`Invalid value for ${fieldPath}`);
@@ -386,6 +411,14 @@ export class ConfigManager {
       throw new Error(`Invalid value for ${fieldPath}`);
     }
     return value;
+  }
+
+  private readOptionalPort(value: unknown, fieldPath: string, fallback: number): number {
+    if (value === undefined || value === null) {
+      return fallback;
+    }
+
+    return this.readPort(value, fieldPath);
   }
 
   private readRequiredString(value: unknown, fieldPath: string): string {
@@ -540,6 +573,45 @@ export class ConfigManager {
     }
 
     return Array.from(uniqueById.values());
+  }
+
+  /**
+   * Get hosts eligible for health checks:
+   * - Root hosts are always eligible
+   * - Hosts inside folders are eligible only when every ancestor folder is expanded
+   */
+  getHostsForHealthChecks(): SSHHost[] {
+    const hosts: SSHHost[] = [];
+
+    const visitExpandedBranch = (folderId: string): void => {
+      const children = this.getChildren(folderId);
+      for (const child of children) {
+        if (child.type === TreeNodeType.HOST) {
+          hosts.push(child as SSHHost);
+          continue;
+        }
+
+        const folder = child as SSHFolder;
+        if (folder.expanded !== false) {
+          visitExpandedBranch(folder.id);
+        }
+      }
+    };
+
+    const rootNodes = this.getRootNodes();
+    for (const rootNode of rootNodes) {
+      if (rootNode.type === TreeNodeType.HOST) {
+        hosts.push(rootNode as SSHHost);
+        continue;
+      }
+
+      const rootFolder = rootNode as SSHFolder;
+      if (rootFolder.expanded !== false) {
+        visitExpandedBranch(rootFolder.id);
+      }
+    }
+
+    return hosts;
   }
 
   /**

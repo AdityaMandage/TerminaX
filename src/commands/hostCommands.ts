@@ -124,16 +124,18 @@ async function promptForHostConfig(existing?: SSHHost): Promise<SSHHost | undefi
 
   // Step 2: Hostname
   const hostnameInput = await vscode.window.showInputBox({
-    prompt: 'Enter hostname or IP address',
-    placeHolder: '192.168.1.100 or example.com',
+    prompt: 'Enter hostname, IP address, or SSH config host alias',
+    placeHolder: '192.168.1.100, example.com, or my-prod-host',
     value: existing?.config.host,
     ignoreFocusOut: true,
     validateInput: (value) => {
       if (!value.trim()) {
         return 'Hostname is required';
       }
-      if (!isValidHostname(value.trim())) {
-        return 'Invalid hostname or IP address';
+      const normalized = value.trim();
+      const isAlias = /^[a-zA-Z0-9._-]+$/.test(normalized);
+      if (!isValidHostname(normalized) && !isAlias) {
+        return 'Invalid hostname/IP or SSH config host alias';
       }
       return undefined;
     }
@@ -144,47 +146,17 @@ async function promptForHostConfig(existing?: SSHHost): Promise<SSHHost | undefi
   }
   const hostname = hostnameInput.trim();
 
-  // Step 3: Username (optional, defaults to current OS user)
-  const username = await vscode.window.showInputBox({
-    prompt: 'Enter username (leave empty for current user)',
-    placeHolder: process.env.USER || process.env.USERNAME || 'ubuntu',
-    value: existing?.config.username,
-    ignoreFocusOut: true
-  });
-
-  if (username === undefined) {
-    return undefined;
-  }
-
-  // Use current OS username if not provided
-  const finalUsername = username.trim() || process.env.USER || process.env.USERNAME || 'root';
-
-  // Step 4: Port
-  const portInput = await vscode.window.showInputBox({
-    prompt: 'Enter SSH port',
-    placeHolder: '22',
-    value: existing?.config.port.toString() || '22',
-    ignoreFocusOut: true,
-    validateInput: (value) => {
-      if (!isValidPort(value)) {
-        return 'Port must be between 1 and 65535';
-      }
-      return undefined;
-    }
-  });
-
-  if (!portInput) {
-    return undefined;
-  }
-
-  const port = parseInt(portInput, 10);
-
-  // Step 5: Auth method
+  // Step 3: Auth method
   const authMethodPick = await vscode.window.showQuickPick(
     [
       { label: 'Password', value: 'password' as AuthMethod },
       { label: 'SSH Key', value: 'keyfile' as AuthMethod },
-      { label: 'SSH Agent', value: 'agent' as AuthMethod }
+      { label: 'SSH Agent', value: 'agent' as AuthMethod },
+      {
+        label: 'OpenSSH Config (ssh <host>)',
+        value: 'openssh' as AuthMethod,
+        description: 'Use local ~/.ssh/config settings like IdentityFile/CertificateFile'
+      }
     ],
     {
       placeHolder: 'Select authentication method'
@@ -196,7 +168,48 @@ async function promptForHostConfig(existing?: SSHHost): Promise<SSHHost | undefi
   }
 
   const authMethod = authMethodPick.value;
+  let finalUsername = existing?.config.username || process.env.USER || process.env.USERNAME || 'root';
+  let port = existing?.config.port || 22;
   let privateKeyPath: string | undefined;
+
+  if (authMethod !== 'openssh') {
+    // Step 4: Username (optional, defaults to current OS user)
+    const username = await vscode.window.showInputBox({
+      prompt: 'Enter username (leave empty for current user)',
+      placeHolder: process.env.USER || process.env.USERNAME || 'ubuntu',
+      value: existing?.config.username,
+      ignoreFocusOut: true
+    });
+
+    if (username === undefined) {
+      return undefined;
+    }
+
+    finalUsername = username.trim() || process.env.USER || process.env.USERNAME || 'root';
+
+    // Step 5: Port
+    const portInput = await vscode.window.showInputBox({
+      prompt: 'Enter SSH port',
+      placeHolder: '22',
+      value: existing?.config.port.toString() || '22',
+      ignoreFocusOut: true,
+      validateInput: (value) => {
+        if (!isValidPort(value)) {
+          return 'Port must be between 1 and 65535';
+        }
+        return undefined;
+      }
+    });
+
+    if (!portInput) {
+      return undefined;
+    }
+
+    port = parseInt(portInput, 10);
+  } else {
+    finalUsername = existing?.config.username || 'ssh-config';
+    port = existing?.config.port || 22;
+  }
 
   // Step 6: Get key path if using keyfile auth
   if (authMethod === 'keyfile') {
@@ -229,7 +242,7 @@ async function promptForHostConfig(existing?: SSHHost): Promise<SSHHost | undefi
         username: finalUsername,
         port,
         authMethod,
-        privateKeyPath,
+        privateKeyPath: authMethod === 'keyfile' ? privateKeyPath : undefined,
         keepaliveInterval: existing.config.keepaliveInterval ?? defaultKeepaliveInterval,
         keepaliveCountMax: existing.config.keepaliveCountMax ?? defaultKeepaliveCountMax
       }

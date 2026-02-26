@@ -3,7 +3,7 @@ import { TreeNode, TreeNodeType } from './TreeNode';
 /**
  * SSH authentication methods
  */
-export type AuthMethod = 'password' | 'keyfile' | 'agent';
+export type AuthMethod = 'password' | 'keyfile' | 'agent' | 'openssh';
 
 /**
  * SSH connection configuration
