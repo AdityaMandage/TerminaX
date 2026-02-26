@@ -2,7 +2,7 @@
   "name": "terminax",
   "displayName": "TerminaX",
   "description": "Advanced SSH connection management for VSCode with MobaXterm-like features",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "publisher": "terminax",
   "icon": "resources/icons/terminax-logo.png",
   "license": "ISC",

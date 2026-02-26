@@ -9,7 +9,7 @@ TerminaX provides comprehensive SSH session management directly within VS Code, 
 ## Download
 
 Download the latest packaged extension (VSIX) from GitHub Releases:
-[terminax-1.0.0.vsix](https://github.com/AdityaMandage/TerminaX/releases/latest/download/terminax-1.0.0.vsix)
+[terminax-1.0.1.vsix](https://github.com/AdityaMandage/TerminaX/releases/latest/download/terminax-1.0.1.vsix)
 
 To install, open VS Code, run the command palette `Extensions: Install from VSIX...`, and select the downloaded file.
 
