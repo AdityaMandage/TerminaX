@@ -39,6 +39,7 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
   private openSshMarkedConnected: boolean = false;
   private openSshConnectedTimer: NodeJS.Timeout | null = null;
   private readonly closeOnCleanExit: boolean;
+  private pendingSttyResize: NodeJS.Timeout | null = null;
 
   constructor(
     private host: SSHHost,
@@ -100,6 +101,9 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
     this.dimensions = dimensions;
     if (this.stream) {
       this.stream.setWindow(dimensions.rows, dimensions.columns, 0, 0);
+    }
+    if (this.nativeProcess?.stdin.writable && this.openSshMarkedConnected) {
+      this.scheduleSttyResize(dimensions.columns, dimensions.rows);
     }
   }
 
@@ -497,6 +501,7 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
 
   private teardownConnection(): void {
     this.clearOpenSshConnectedTimer();
+    this.clearPendingSttyResize();
 
     if (this.stream) {
       this.stream.removeAllListeners();
@@ -656,6 +661,11 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
     this.hasEverConnected = true;
     this.writeEmitter.fire('✅ Connected via OpenSSH config\r\n\r\n');
     this.updateStatus(ConnectionStatus.CONNECTED);
+
+    // Set the initial remote PTY size to match the VS Code terminal dimensions
+    if (this.dimensions && this.nativeProcess?.stdin.writable) {
+      this.scheduleSttyResize(this.dimensions.columns, this.dimensions.rows);
+    }
   }
 
   private clearOpenSshConnectedTimer(): void {
@@ -775,6 +785,44 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
   private flushNativeDecoders(): void {
     this.flushDecoder(this.nativeStdoutDecoder);
     this.flushDecoder(this.nativeStderrDecoder);
+  }
+
+  /**
+   * Schedule a debounced stty resize command to the remote SSH session.
+   * Debouncing prevents flooding the remote with resize commands during
+   * rapid resize events (e.g., window drag).
+   */
+  private scheduleSttyResize(cols: number, rows: number): void {
+    this.clearPendingSttyResize();
+    this.pendingSttyResize = setTimeout(() => {
+      this.pendingSttyResize = null;
+      this.sendSttyResize(cols, rows);
+    }, 150);
+  }
+
+  /**
+   * Send stty resize to the remote SSH PTY.
+   * This updates the remote terminal dimensions, causing the kernel to send
+   * SIGWINCH to all foreground processes (nano, vim, htop, etc.) so they redraw.
+   */
+  private sendSttyResize(cols: number, rows: number): void {
+    if (!this.nativeProcess?.stdin.writable || this.isCleanedUp) {
+      return;
+    }
+
+    const safeCols = Math.max(2, Math.floor(cols));
+    const safeRows = Math.max(1, Math.floor(rows));
+    // Use printf to avoid shell echo; wrap in a subshell so there is no effect
+    // on the user's current interactive state.
+    const resizeCmd = `stty cols ${safeCols} rows ${safeRows}\n`;
+    this.nativeProcess.stdin.write(resizeCmd);
+  }
+
+  private clearPendingSttyResize(): void {
+    if (this.pendingSttyResize) {
+      clearTimeout(this.pendingSttyResize);
+      this.pendingSttyResize = null;
+    }
   }
 
   private flushDecoder(decoder: StringDecoder): void {
