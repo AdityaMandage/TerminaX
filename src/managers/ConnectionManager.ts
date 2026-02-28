@@ -110,6 +110,9 @@ export class ConnectionManager implements vscode.Disposable {
         terminalId,
         (status, metadata) => {
           this.handleStatusUpdate(host.id, terminalId, status, metadata);
+        },
+        {
+          closeOnCleanExit: false
         }
       );
 

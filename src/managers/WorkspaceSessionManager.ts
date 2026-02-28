@@ -154,6 +154,9 @@ export class WorkspaceSessionManager implements vscode.Disposable {
       sessionId,
       (status, metadata) => {
         this.updateSessionStatus(sessionId, status, metadata);
+      },
+      {
+        closeOnCleanExit: true
       }
     );
 

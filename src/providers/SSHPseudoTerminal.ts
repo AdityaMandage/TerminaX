@@ -7,6 +7,10 @@ import { SSHHost } from '../models/SSHHost';
 import { ConnectionMetadata, ConnectionStatus } from '../models/ConnectionState';
 import { CredentialService } from '../services/CredentialService';
 
+interface SSHPseudoTerminalOptions {
+  closeOnCleanExit?: boolean;
+}
+
 /**
  * Pseudoterminal implementation for SSH connections
  */
@@ -34,14 +38,17 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
   private nativeStderrDecoder: StringDecoder = new StringDecoder('utf8');
   private openSshMarkedConnected: boolean = false;
   private openSshConnectedTimer: NodeJS.Timeout | null = null;
+  private readonly closeOnCleanExit: boolean;
 
   constructor(
     private host: SSHHost,
     private credentialService: CredentialService,
     private terminalId: string,
-    statusCallback?: (status: ConnectionStatus, metadata?: ConnectionMetadata) => void
+    statusCallback?: (status: ConnectionStatus, metadata?: ConnectionMetadata) => void,
+    options?: SSHPseudoTerminalOptions
   ) {
     this.statusCallback = statusCallback;
+    this.closeOnCleanExit = options?.closeOnCleanExit ?? true;
   }
 
   /**
@@ -130,15 +137,6 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
   }
 
   private connectViaOpenSshConfig(): void {
-    const extensionConfig = vscode.workspace.getConfiguration('terminax');
-    const keepaliveIntervalMs =
-      this.host.config.keepaliveInterval ??
-      extensionConfig.get<number>('keepaliveInterval', 30000);
-    const keepaliveCountMax =
-      this.host.config.keepaliveCountMax ??
-      extensionConfig.get<number>('keepaliveCountMax', 3);
-    const keepaliveIntervalSeconds = Math.max(1, Math.round(keepaliveIntervalMs / 1000));
-
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       TERM: this.resolveTerminalType(process.env.TERM),
@@ -148,20 +146,13 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
       env.LANG = 'en_US.UTF-8';
     }
 
-    const args = [
-      '-tt',
-      '-o',
-      'LogLevel=ERROR',
-      '-o',
-      `ServerAliveInterval=${keepaliveIntervalSeconds}`,
-      '-o',
-      `ServerAliveCountMax=${keepaliveCountMax}`,
-      this.host.config.host
-    ];
+    const shellLaunch = this.resolveLocalShellLaunch();
+    const sshCommand = this.buildOpenSshCommand(shellLaunch.kind);
+    const launch = this.resolveOpenSshLaunch(shellLaunch, sshCommand);
 
     const sshProcess = spawn(
-      'ssh',
-      args,
+      launch.command,
+      launch.args,
       {
         env,
         stdio: 'pipe'
@@ -350,7 +341,11 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
     if (code === 0 || code === undefined || code === null) {
       this.writeEmitter.fire(`\r\n\n✨ Connection closed\r\n`);
       this.updateStatus(ConnectionStatus.DISCONNECTED, { exitCode: 0 });
-      this.closeEmitter.fire(0);
+      if (this.closeOnCleanExit) {
+        this.closeEmitter.fire(0);
+      } else {
+        this.writeEmitter.fire('ℹ️  Session ended. Close this terminal manually when done.\r\n');
+      }
     } else {
       // Non-zero exit code means error
       this.writeEmitter.fire(`\r\n\n❌ Connection terminated (exit code: ${code})\r\n`);
@@ -399,7 +394,11 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
     if (code === 0) {
       this.writeEmitter.fire('\r\n\n✨ Connection closed\r\n');
       this.updateStatus(ConnectionStatus.DISCONNECTED, { exitCode: 0 });
-      this.closeEmitter.fire(0);
+      if (this.closeOnCleanExit) {
+        this.closeEmitter.fire(0);
+      } else {
+        this.writeEmitter.fire('ℹ️  Session ended. Close this terminal manually when done.\r\n');
+      }
       this.cleanup();
       return;
     }
@@ -680,6 +679,85 @@ export class SSHPseudoTerminal implements vscode.Pseudoterminal {
     this.streamStderrDecoder = new StringDecoder('utf8');
     this.nativeStdoutDecoder = new StringDecoder('utf8');
     this.nativeStderrDecoder = new StringDecoder('utf8');
+  }
+
+  private resolveLocalShellLaunch(): {
+    command: string;
+    kind: 'posix' | 'powershell' | 'cmd';
+  } {
+    if (process.platform === 'win32') {
+      const comspec = process.env.ComSpec || process.env.COMSPEC;
+      if (comspec) {
+        return { command: comspec, kind: 'cmd' };
+      }
+
+      return {
+        command: 'powershell.exe',
+        kind: 'powershell'
+      };
+    }
+
+    return {
+      command: process.env.SHELL || '/bin/bash',
+      kind: 'posix'
+    };
+  }
+
+  private resolveOpenSshLaunch(
+    shellLaunch: { command: string; kind: 'posix' | 'powershell' | 'cmd' },
+    sshCommand: string
+  ): {
+    command: string;
+    args: string[];
+  } {
+    if (shellLaunch.kind === 'posix') {
+      return {
+        command: shellLaunch.command,
+        args: ['-lc', sshCommand]
+      };
+    }
+
+    if (shellLaunch.kind === 'powershell') {
+      return {
+        command: shellLaunch.command,
+        args: ['-NoLogo', '-NoProfile', '-Command', sshCommand]
+      };
+    }
+
+    return {
+      command: shellLaunch.command,
+      args: ['/d', '/s', '/c', sshCommand]
+    };
+  }
+
+  private buildOpenSshCommand(shellKind: 'posix' | 'powershell' | 'cmd'): string {
+    const extensionConfig = vscode.workspace.getConfiguration('terminax');
+    const keepaliveIntervalMs =
+      this.host.config.keepaliveInterval ??
+      extensionConfig.get<number>('keepaliveInterval', 30000);
+    const keepaliveCountMax =
+      this.host.config.keepaliveCountMax ??
+      extensionConfig.get<number>('keepaliveCountMax', 3);
+    const keepaliveIntervalSeconds = Math.max(1, Math.round(keepaliveIntervalMs / 1000));
+
+    const targetHost = this.quoteShellArg(this.host.config.host, shellKind);
+    return `ssh -tt -o LogLevel=ERROR -o ServerAliveInterval=${keepaliveIntervalSeconds} -o ServerAliveCountMax=${keepaliveCountMax} ${targetHost}`;
+  }
+
+  private quoteShellArg(raw: string, shellKind: 'posix' | 'powershell' | 'cmd'): string {
+    if (/^[a-zA-Z0-9._:@-]+$/.test(raw)) {
+      return raw;
+    }
+
+    if (shellKind === 'posix') {
+      return `'${raw.replace(/'/g, `'\\''`)}'`;
+    }
+
+    if (shellKind === 'powershell') {
+      return `'${raw.replace(/'/g, "''")}'`;
+    }
+
+    return `"${raw.replace(/"/g, '""')}"`;
   }
 
   private emitDecodedChunk(data: Buffer, decoder: StringDecoder): void {
